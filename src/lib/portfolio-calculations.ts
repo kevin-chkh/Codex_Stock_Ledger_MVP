@@ -121,6 +121,7 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
         remaining_cost: openCost,
         realized_profit: roundMoney(draft.realized_profit),
         current_price: currentPrice,
+        price_updated_at: stock?.price_updated_at ?? null,
         market_value: marketValue,
         unrealized_profit: unrealizedProfit,
         unrealized_return_rate: openCost > 0 ? unrealizedProfit / openCost : 0,

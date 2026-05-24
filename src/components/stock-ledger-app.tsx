@@ -58,6 +58,11 @@ type LocalSnapshot = {
   settings: UserSettings;
 };
 
+type QuotePayload = {
+  quotes: { symbol: string; market: string; price: number; priceUpdatedAt: string }[];
+  failedSymbols: string[];
+};
+
 const LOCAL_STORAGE_KEY = "stock-ledger-local-v1";
 
 const tradeSchema = z.object({
@@ -103,6 +108,20 @@ function numberValue(value: unknown) {
   return Number(value ?? 0);
 }
 
+function formatQuoteUpdatedAt(value: string | null) {
+  if (!value) return "未更新";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未更新";
+  return new Intl.DateTimeFormat("zh-TW", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
 function toUserError(error: unknown, fallback: string) {
   if (error && typeof error === "object" && "message" in error && typeof (error as { message: unknown }).message === "string") {
     const message = String((error as { message: string }).message);
@@ -140,6 +159,7 @@ export default function StockLedgerApp() {
   const [stockCatalog, setStockCatalog] = useState<StockCatalogItem[]>([]);
   const [catalogSource, setCatalogSource] = useState<"api" | "cache" | "fallback">("fallback");
   const [catalogLoading, setCatalogLoading] = useState(false);
+  const [quoteRefreshing, setQuoteRefreshing] = useState(false);
   const [formError, setFormError] = useState("");
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   const [dashboardPortfolioId, setDashboardPortfolioId] = useState("all");
@@ -149,6 +169,13 @@ export default function StockLedgerApp() {
   const [stockDraft, setStockDraft] = useState({ stockId: "", currentPrice: "", industry: "", tags: "" });
 
   const positions = useMemo(() => buildPositions(trades, stocks, stockTags), [trades, stocks, stockTags]);
+  const catalogBySymbol = useMemo(() => new Map(stockCatalog.map((item) => [item.symbol, item])), [stockCatalog]);
+  const stockSignature = useMemo(() => stocks.map((stock) => stock.id).sort().join("|"), [stocks]);
+  const latestQuoteAt = useMemo(() => {
+    const timestamps = stocks.map((stock) => stock.price_updated_at).filter((value): value is string => Boolean(value));
+    if (!timestamps.length) return null;
+    return timestamps.reduce((latest, current) => (new Date(current).getTime() > new Date(latest).getTime() ? current : latest));
+  }, [stocks]);
   const dashboardPortfolios = useMemo(
     () => (dashboardPortfolioId === "all" ? portfolios : portfolios.filter((portfolio) => portfolio.id === dashboardPortfolioId)),
     [dashboardPortfolioId, portfolios]
@@ -179,6 +206,26 @@ export default function StockLedgerApp() {
       settings
     });
   }, [cashMovements, loading, portfolios, settings, stockTags, stocks, trades, userId]);
+
+  useEffect(() => {
+    if (!userId || !stockSignature) return;
+
+    let cancelled = false;
+    const run = async () => {
+      if (cancelled || typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      await refreshQuotes(false);
+    };
+
+    void run();
+    const timer = window.setInterval(() => {
+      void run();
+    }, 90000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [stockCatalog.length, stockSignature, userId]);
 
   async function initialize() {
     try {
@@ -232,6 +279,84 @@ export default function StockLedgerApp() {
     }
   }
 
+  async function refreshQuotes(showResultMessage = true) {
+    if (!stocks.length) {
+      if (showResultMessage) setMessage("尚無股票可更新現價。");
+      return;
+    }
+
+    setQuoteRefreshing(true);
+    try {
+      const response = await fetch("/api/stock-quotes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          items: stocks.map((stock) => ({
+            symbol: stock.symbol,
+            market: catalogBySymbol.get(stock.symbol)?.market || stock.market || "TWSE"
+          }))
+        })
+      });
+
+      if (!response.ok) throw new Error("quote api failed");
+      const payload = (await response.json()) as QuotePayload;
+      const quoteMap = new Map(payload.quotes.map((quote) => [quote.symbol, quote]));
+      const now = new Date().toISOString();
+      let updatedCount = 0;
+
+      const nextStocks = stocks.map((stock) => {
+        const quote = quoteMap.get(stock.symbol);
+        if (!quote) return stock;
+        updatedCount += 1;
+        return {
+          ...stock,
+          market: quote.market || stock.market,
+          current_price: quote.price,
+          price_updated_at: quote.priceUpdatedAt,
+          updated_at: now
+        };
+      });
+
+      if (updatedCount && supabase && hasSupabaseEnv) {
+        const updates = nextStocks.filter(
+          (stock, index) =>
+            stock.current_price !== stocks[index]?.current_price ||
+            stock.price_updated_at !== stocks[index]?.price_updated_at ||
+            stock.market !== stocks[index]?.market
+        );
+
+        for (const stock of updates) {
+          const { error } = await supabase
+            .from("stocks")
+            .update({
+              market: stock.market,
+              current_price: stock.current_price,
+              price_updated_at: stock.price_updated_at,
+              updated_at: stock.updated_at
+            })
+            .eq("id", stock.id);
+          if (error) throw error;
+        }
+      }
+
+      if (updatedCount) setStocks(nextStocks);
+
+      if (showResultMessage) {
+        if (!updatedCount) {
+          setMessage("目前查無可更新的盤中報價。");
+        } else {
+          const failed = payload.failedSymbols?.length ? `，${payload.failedSymbols.length} 檔暫時查無盤中報價` : "";
+          setMessage(`現價已更新 ${updatedCount} 檔${failed}。`);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to refresh quotes", error);
+      if (showResultMessage) setMessage("更新現價失敗，請稍後再試。");
+    } finally {
+      setQuoteRefreshing(false);
+    }
+  }
+
   function loadLocalData() {
     const snapshot = readLocalSnapshot();
     if (!snapshot) return false;
@@ -277,7 +402,7 @@ export default function StockLedgerApp() {
         user_id: demoUser,
         symbol: "2330",
         name: "台積電",
-        market: "TW",
+        market: "TWSE",
         industry: "半導體",
         current_price: 980,
         price_updated_at: now,
@@ -289,7 +414,7 @@ export default function StockLedgerApp() {
         user_id: demoUser,
         symbol: "0050",
         name: "元大台灣50",
-        market: "TW",
+        market: "TWSE",
         industry: "ETF",
         current_price: 176,
         price_updated_at: now,
@@ -430,17 +555,24 @@ export default function StockLedgerApp() {
     if (!portfolio) return setFormError("找不到帳本");
     const editingTrade = editingTradeId ? (trades.find((trade) => trade.id === editingTradeId) ?? null) : null;
 
-    const existingStock = stocks.find((item) => item.symbol === parsed.data.symbol && item.market === "TW");
+    const catalogStock = catalogBySymbol.get(parsed.data.symbol);
+    const existingStock = stocks.find((item) => item.symbol === parsed.data.symbol);
     const stock: Stock =
       existingStock
-        ? { ...existingStock, name: parsed.data.name, industry: parsed.data.industry || existingStock.industry, updated_at: new Date().toISOString() }
+        ? {
+            ...existingStock,
+            name: parsed.data.name,
+            market: catalogStock?.market || existingStock.market,
+            industry: parsed.data.industry || existingStock.industry,
+            updated_at: new Date().toISOString()
+          }
         :
       ({
         id: uid(),
         user_id: userId ?? "demo",
         symbol: parsed.data.symbol,
         name: parsed.data.name,
-        market: "TW",
+        market: catalogStock?.market || "TWSE",
         industry: parsed.data.industry || null,
         current_price: parsed.data.unitPrice,
         price_updated_at: new Date().toISOString(),
@@ -523,7 +655,7 @@ export default function StockLedgerApp() {
       }
     }
 
-    setStocks((current) => (existingStock ? current.map((item) => (item.id === stock.id ? { ...item, industry: stock.industry } : item)) : [...current, stock]));
+    setStocks((current) => (existingStock ? current.map((item) => (item.id === stock.id ? stock : item)) : [...current, stock]));
     setStockTags((current) => [...current.filter((item) => item.stock_id !== stock.id), ...tagRows]);
     setTrades(nextTrades);
     setPortfolios((current) =>
@@ -743,14 +875,15 @@ export default function StockLedgerApp() {
         if (!portfolio) continue;
         const tradeType: TradeType = row.type.includes("賣") ? "sell" : "buy";
 
-        let stock = nextStocks.find((item) => item.symbol === row.symbol && item.market === "TW");
+        let stock = nextStocks.find((item) => item.symbol === row.symbol);
+        const catalogMatch = catalogBySymbol.get(row.symbol);
         if (!stock) {
           stock = {
             id: uid(),
             user_id: userId ?? "demo",
             symbol: row.symbol,
             name: row.name,
-            market: "TW",
+            market: catalogMatch?.market || "TWSE",
             industry: row.industry || null,
             current_price: row.unitPrice,
             price_updated_at: new Date().toISOString(),
@@ -855,15 +988,19 @@ export default function StockLedgerApp() {
             資料來源：
             {catalogSource === "api" ? "API" : catalogSource === "cache" ? "本地快取" : "fallback"}
           </p>
+          <p className="mt-1 text-xs text-ink/45">現價更新：{formatQuoteUpdatedAt(latestQuoteAt)} · 90 秒自動更新</p>
         </div>
         <div className="flex items-center gap-1">
           <button
             className="rounded-full p-2 text-ink/75 disabled:opacity-45"
-            title="重新載入股票目錄"
-            onClick={() => void reloadStockCatalog()}
-            disabled={catalogLoading}
+            title="更新近即時股價"
+            onClick={() => void refreshQuotes()}
+            disabled={quoteRefreshing}
           >
-            <RefreshCw size={20} className={catalogLoading ? "animate-spin" : ""} />
+            <RefreshCw size={20} className={quoteRefreshing ? "animate-spin" : ""} />
+          </button>
+          <button className="rounded-full p-2 text-ink/75 disabled:opacity-45" title="重新載入股票目錄" onClick={() => void reloadStockCatalog()} disabled={catalogLoading}>
+            <BookOpen size={20} className={catalogLoading ? "animate-pulse" : ""} />
           </button>
           <button className="rounded-full p-2 text-ink/75" title="設定" onClick={() => setSheetMode("settings")}>
             <Settings size={20} />

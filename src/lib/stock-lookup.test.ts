@@ -3,7 +3,7 @@ import { findStockByName, findStockBySymbol, fuzzySearchStocks, type StockCatalo
 
 const catalog: StockCatalogItem[] = [
   { symbol: "3711", name: "日月光投控", industry: "半導體業", market: "TWSE", isEtf: false },
-  { symbol: "3771", name: "昇陽半導體", industry: "半導體業", market: "TPEx", isEtf: false },
+  { symbol: "3771", name: "昇陽半導體", industry: "半導體業", market: "Emerging", isEtf: false },
   { symbol: "0050", name: "元大台灣50", industry: "ETF", market: "TWSE", isEtf: true }
 ];
 
@@ -23,6 +23,6 @@ describe("stock lookup", () => {
   });
 
   it("returns an ETF fallback for unknown 00-prefixed symbols", () => {
-    expect(findStockBySymbol(catalog, "00999")).toMatchObject({ symbol: "00999", industry: "ETF", isEtf: true });
+    expect(findStockBySymbol(catalog, "00999")).toMatchObject({ symbol: "00999", industry: "ETF", market: "TWSE", isEtf: true });
   });
 });

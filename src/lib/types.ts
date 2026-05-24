@@ -84,6 +84,7 @@ export type Position = {
   remaining_cost: number;
   realized_profit: number;
   current_price: number;
+  price_updated_at: string | null;
   market_value: number;
   unrealized_profit: number;
   unrealized_return_rate: number;

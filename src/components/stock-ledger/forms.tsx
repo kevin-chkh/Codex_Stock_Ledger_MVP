@@ -68,7 +68,7 @@ export function TradeForm({
   const symbolSuggestions = useMemo(() => fuzzySearchStocks(stockCatalog, draft.symbol, 8), [stockCatalog, draft.symbol]);
   const nameSuggestions = useMemo(() => fuzzySearchStocks(stockCatalog, draft.name, 8), [stockCatalog, draft.name]);
   const selectedPortfolioId = draft.portfolioId || portfolios[0]?.id || "";
-  const selectedStock = useMemo(() => stocks.find((stock) => stock.symbol === draft.symbol && stock.market === "TW"), [stocks, draft.symbol]);
+  const selectedStock = useMemo(() => stocks.find((stock) => stock.symbol === draft.symbol), [stocks, draft.symbol]);
   const selectedPosition = useMemo(
     () => positions.find((position) => position.stock_id === selectedStock?.id && position.portfolio_id === selectedPortfolioId),
     [positions, selectedPortfolioId, selectedStock?.id]

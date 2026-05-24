@@ -13,7 +13,7 @@ const stock: Stock = {
   user_id: "user-1",
   symbol: "2330",
   name: "台積電",
-  market: "TW",
+  market: "TWSE",
   industry: "半導體業",
   current_price: 110,
   price_updated_at: null,
@@ -94,6 +94,7 @@ describe("buildPositions", () => {
     expect(positions[0].average_cost).toBe(110.2);
     expect(positions[0].realized_profit).toBe(950.5);
     expect(positions[0].unrealized_profit).toBe(-30);
+    expect(positions[0].price_updated_at).toBeNull();
   });
 
   it("rejects selling more than current holdings", () => {

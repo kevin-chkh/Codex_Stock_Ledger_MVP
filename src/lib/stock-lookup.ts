@@ -20,7 +20,7 @@ const FALLBACK_STOCKS: StockCatalogItem[] = [
   { symbol: "2317", name: "\u9d3b\u6d77", industry: "\u5176\u4ed6\u96fb\u5b50\u696d", market: "TWSE", isEtf: false },
   { symbol: "2454", name: "\u806f\u767c\u79d1", industry: "\u534a\u5c0e\u9ad4\u696d", market: "TWSE", isEtf: false },
   { symbol: "3711", name: "\u65e5\u6708\u5149\u6295\u63a7", industry: "\u534a\u5c0e\u9ad4\u696d", market: "TWSE", isEtf: false },
-  { symbol: "3771", name: "\u6607\u967d\u534a\u5c0e\u9ad4", industry: "\u534a\u5c0e\u9ad4\u696d", market: "TPEx", isEtf: false },
+  { symbol: "3771", name: "\u6607\u967d\u534a\u5c0e\u9ad4", industry: "\u534a\u5c0e\u9ad4\u696d", market: "Emerging", isEtf: false },
   { symbol: "2308", name: "\u53f0\u9054\u96fb", industry: "\u96fb\u5b50\u96f6\u7d44\u4ef6\u696d", market: "TWSE", isEtf: false },
   { symbol: "2884", name: "\u7389\u5c71\u91d1", industry: "\u91d1\u878d\u4fdd\u96aa\u696d", market: "TWSE", isEtf: false },
   { symbol: "2886", name: "\u5146\u8c50\u91d1", industry: "\u91d1\u878d\u4fdd\u96aa\u696d", market: "TWSE", isEtf: false }
@@ -52,7 +52,7 @@ export function findStockBySymbol(catalog: StockCatalogItem[], symbol: string) {
   if (!normalized) return undefined;
   const exact = catalog.find((item) => item.symbol === normalized);
   if (exact) return exact;
-  if (/^00\d+/.test(normalized)) return { symbol: normalized, name: "", industry: "ETF", isEtf: true };
+  if (/^00\d+/.test(normalized)) return { symbol: normalized, name: "", industry: "ETF", market: "TWSE", isEtf: true };
   return undefined;
 }
 
@@ -121,7 +121,7 @@ function mergeCatalog(items: StockCatalogItem[]) {
     map.set(item.symbol, {
       ...item,
       industry: isEtf ? "ETF" : item.industry || "\u672a\u5206\u985e",
-      market: item.market || "TW",
+      market: item.market || "TWSE",
       isEtf
     });
   }
