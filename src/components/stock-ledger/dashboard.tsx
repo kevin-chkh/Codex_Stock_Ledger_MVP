@@ -19,7 +19,10 @@ export function Dashboard({
   selectedPortfolioId: string;
   onPortfolioChange: (portfolioId: string) => void;
 }) {
-  const topPositions = [...positions].sort((a, b) => b.market_value - a.market_value).slice(0, 4);
+  const topPositions = positions
+    .filter((position) => position.quantity > 0)
+    .sort((a, b) => b.market_value - a.market_value)
+    .slice(0, 4);
   const recentTrades = trades.slice(0, 5);
   const stockMap = new Map(stocks.map((stock) => [stock.id, stock]));
 

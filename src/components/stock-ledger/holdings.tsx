@@ -5,22 +5,23 @@ import type { Position } from "@/lib/types";
 import { ListSection, SmallMetric } from "./ui";
 
 export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit: (position: Position) => void }) {
+  const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("all");
   const [industryFilter, setIndustryFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"marketValue" | "returnRate" | "profit" | "symbol">("marketValue");
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
-    positions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
+    openPositions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
     return [...tags].sort((a, b) => a.localeCompare(b, "zh-Hant"));
-  }, [positions]);
+  }, [openPositions]);
   const availableIndustries = useMemo(
-    () => [...new Set(positions.map((position) => position.industry).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-Hant")),
-    [positions]
+    () => [...new Set(openPositions.map((position) => position.industry).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-Hant")),
+    [openPositions]
   );
   const filteredPositions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return [...positions]
+    return [...openPositions]
       .filter((position) => {
         const searchable = [position.symbol, position.name, position.industry, ...position.tags].join(" ").toLowerCase();
         if (normalizedQuery && !searchable.includes(normalizedQuery)) return false;
@@ -34,7 +35,7 @@ export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit:
         if (sortBy === "symbol") return a.symbol.localeCompare(b.symbol);
         return b.market_value - a.market_value;
       });
-  }, [industryFilter, positions, query, sortBy, tagFilter]);
+  }, [industryFilter, openPositions, query, sortBy, tagFilter]);
 
   return (
     <div className="space-y-4">
@@ -73,7 +74,7 @@ export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit:
           </select>
         </div>
       </section>
-      <ListSection title={"持股 " + filteredPositions.length + " 檔"} empty={positions.length ? "沒有符合條件的持股" : "尚無持股"}>
+      <ListSection title={"持股 " + filteredPositions.length + " 檔"} empty={openPositions.length ? "沒有符合條件的持股" : "尚無持股"}>
         {filteredPositions.map((position) => (
           <article key={position.stock_id} className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
             <div className="flex items-start justify-between gap-3">

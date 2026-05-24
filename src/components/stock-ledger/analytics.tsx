@@ -9,14 +9,15 @@ const colors = ["#2f7d68", "#c6973f", "#c75b4d", "#4f6f9f", "#7c6a9d", "#61705f"
 
 export function Analytics({ positions }: { positions: Position[] }) {
   const [tagFilter, setTagFilter] = useState("all");
+  const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
-    positions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
+    openPositions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
     return [...tags].sort((a, b) => a.localeCompare(b, "zh-Hant"));
-  }, [positions]);
+  }, [openPositions]);
   const filteredPositions = useMemo(
-    () => (tagFilter === "all" ? positions : positions.filter((position) => position.tags.includes(tagFilter))),
-    [positions, tagFilter]
+    () => (tagFilter === "all" ? openPositions : openPositions.filter((position) => position.tags.includes(tagFilter))),
+    [openPositions, tagFilter]
   );
   const byIndustry = groupByValue(filteredPositions, (position) => position.industry, (position) => position.market_value);
   const byTag = groupByValue(
@@ -25,7 +26,7 @@ export function Analytics({ positions }: { positions: Position[] }) {
     (item) => item.value
   );
   const byStock = groupByValue(filteredPositions, (position) => position.symbol + " " + position.name, (position) => position.market_value);
-  const byProfit = [...filteredPositions].sort((a, b) => b.total_profit - a.total_profit).slice(0, 8);
+  const byProfit = [...filteredPositions].sort((a, b) => b.unrealized_profit - a.unrealized_profit).slice(0, 8);
 
   return (
     <div className="space-y-4">
@@ -49,9 +50,9 @@ export function Analytics({ positions }: { positions: Position[] }) {
           <Row
             key={position.stock_id}
             title={position.symbol + " " + position.name}
-            subtitle={"市值 " + currency(position.market_value) + " · 報酬率 " + percent(position.total_return_rate)}
-            right={currency(position.total_profit)}
-            rightClass={profitClass(position.total_profit)}
+            subtitle={"市值 " + currency(position.market_value) + " · 報酬率 " + percent(position.unrealized_return_rate)}
+            right={currency(position.unrealized_profit)}
+            rightClass={profitClass(position.unrealized_profit)}
           />
         ))}
       </ListSection>

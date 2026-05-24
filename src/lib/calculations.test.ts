@@ -116,6 +116,19 @@ describe("buildPositions", () => {
     expect(positions[0].remaining_cost).toBe(0);
     expect(positions[0].realized_profit).toBe(1924);
   });
+
+  it("treats same-day buys before sells for position math", () => {
+    const positions = buildPositions(
+      [
+        trade({ id: "sell-1", type: "sell", quantity: 60, traded_at: "2026-01-03", created_at: "2026-01-03T08:00:00.000Z", gross_amount: 7200, fee: 20, tax: 21.6, net_amount: 7158.4 }),
+        trade({ id: "buy-1", type: "buy", quantity: 100, traded_at: "2026-01-03", created_at: "2026-01-03T09:00:00.000Z", net_amount: 10020 })
+      ],
+      [stock]
+    );
+
+    expect(positions[0].quantity).toBe(40);
+    expect(positions[0].realized_profit).toBeCloseTo(1146.4, 6);
+  });
 });
 
 describe("calculateDashboardMetrics", () => {

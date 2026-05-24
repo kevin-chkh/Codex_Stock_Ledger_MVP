@@ -37,6 +37,18 @@ export function calculateTradeAmounts(input: {
   return { grossAmount, fee, tax, netAmount };
 }
 
+export function compareTradesChronologically(a: Trade, b: Trade) {
+  const dateDiff = new Date(a.traded_at).getTime() - new Date(b.traded_at).getTime();
+  if (dateDiff) return dateDiff;
+
+  if (a.type !== b.type) return a.type === "buy" ? -1 : 1;
+
+  const createdAtDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  if (createdAtDiff) return createdAtDiff;
+
+  return a.id.localeCompare(b.id);
+}
+
 export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: StockTag[] = []): Position[] {
   const stocksById = new Map(stocks.map((stock) => [stock.id, stock]));
   const tagsByStockId = stockTags.reduce<Map<string, string[]>>((map, tag) => {
@@ -46,10 +58,7 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
     return map;
   }, new Map());
 
-  const sortedTrades = [...trades].sort((a, b) => {
-    const dateDiff = new Date(a.traded_at).getTime() - new Date(b.traded_at).getTime();
-    return dateDiff || a.id.localeCompare(b.id);
-  });
+  const sortedTrades = [...trades].sort(compareTradesChronologically);
 
   const drafts = new Map<
     string,

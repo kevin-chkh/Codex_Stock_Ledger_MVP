@@ -91,6 +91,15 @@ describe("trade ledger integration", () => {
     expect(hasOversoldPosition([trades[0], { ...trades[1], quantity: 80 }])).toBe(false);
   });
 
+  it("allows same-day buys to offset sells when only date precision is available", () => {
+    const sameDayTrades = [
+      trade({ id: "sell-1", type: "sell", quantity: 10, traded_at: "2026-01-03", created_at: "2026-01-03T08:00:00.000Z", net_amount: 997 }),
+      trade({ id: "buy-1", type: "buy", quantity: 10, traded_at: "2026-01-03", created_at: "2026-01-03T09:00:00.000Z", net_amount: 10020 })
+    ];
+
+    expect(hasOversoldPosition(sameDayTrades)).toBe(false);
+  });
+
   it("runs buy/sell/edit/delete flow and keeps cash consistent", () => {
     const base = portfolio({ cash_balance: 100000 });
     const buy = makeTrade({

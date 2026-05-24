@@ -1,4 +1,4 @@
-import { calculateTradeAmounts } from "./calculations";
+import { calculateTradeAmounts, compareTradesChronologically } from "./calculations";
 import type { Portfolio, Trade, TradeType, UserSettings } from "./types";
 
 export function makeTrade(input: {
@@ -80,10 +80,7 @@ export function deleteTradeFromPortfolios(portfolios: Portfolio[], trade: Trade,
 
 export function hasOversoldPosition(trades: Trade[]) {
   const quantities = new Map<string, number>();
-  const sortedTrades = [...trades].sort((a, b) => {
-    const dateDiff = new Date(a.traded_at).getTime() - new Date(b.traded_at).getTime();
-    return dateDiff || a.id.localeCompare(b.id);
-  });
+  const sortedTrades = [...trades].sort(compareTradesChronologically);
 
   for (const trade of sortedTrades) {
     const key = trade.portfolio_id + ":" + trade.stock_id;
