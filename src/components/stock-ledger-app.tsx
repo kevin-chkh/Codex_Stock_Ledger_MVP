@@ -484,7 +484,10 @@ export default function StockLedgerApp() {
       ? { ...tradeBase, id: editingTrade.id, traded_at: editingTrade.traded_at, created_at: editingTrade.created_at }
       : tradeBase;
     const nextTrades = editingTrade ? trades.map((item) => (item.id === trade.id ? trade : item)) : [trade, ...trades];
-    if (hasOversoldPosition(nextTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
+    const shouldValidateOversold =
+      parsed.data.type === "sell" ||
+      Boolean(editingTrade && (editingTrade.type === "sell" || editingTrade.quantity > parsed.data.quantity || editingTrade.stock_id !== stock.id || editingTrade.portfolio_id !== portfolio.id));
+    if (shouldValidateOversold && hasOversoldPosition(nextTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
       return setFormError("此修改會造成某檔股票賣出股數超過持有股數，請先調整相關交易。");
     }
     const tagRows = parseTags(parsed.data.tags).map((name) => ({
