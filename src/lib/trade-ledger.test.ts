@@ -100,6 +100,16 @@ describe("trade ledger integration", () => {
     expect(hasOversoldPosition(sameDayTrades)).toBe(false);
   });
 
+  it("does not block an unrelated stock when another position is oversold", () => {
+    const trades = [
+      trade({ id: "buy-2330", stock_id: "stock-2330", quantity: 10, traded_at: "2026-01-01" }),
+      trade({ id: "sell-2603", stock_id: "stock-2603", type: "sell", quantity: 5, traded_at: "2026-01-02", net_amount: 4800 })
+    ];
+
+    expect(hasOversoldPosition(trades)).toBe(true);
+    expect(hasOversoldPosition(trades, { portfolioId: "portfolio-1", stockId: "stock-2330" })).toBe(false);
+  });
+
   it("runs buy/sell/edit/delete flow and keeps cash consistent", () => {
     const base = portfolio({ cash_balance: 100000 });
     const buy = makeTrade({

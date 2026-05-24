@@ -78,9 +78,12 @@ export function deleteTradeFromPortfolios(portfolios: Portfolio[], trade: Trade,
   );
 }
 
-export function hasOversoldPosition(trades: Trade[]) {
+export function hasOversoldPosition(trades: Trade[], scope?: { portfolioId: string; stockId: string }) {
   const quantities = new Map<string, number>();
-  const sortedTrades = [...trades].sort(compareTradesChronologically);
+  const scopedTrades = scope
+    ? trades.filter((trade) => trade.portfolio_id === scope.portfolioId && trade.stock_id === scope.stockId)
+    : trades;
+  const sortedTrades = [...scopedTrades].sort(compareTradesChronologically);
 
   for (const trade of sortedTrades) {
     const key = trade.portfolio_id + ":" + trade.stock_id;

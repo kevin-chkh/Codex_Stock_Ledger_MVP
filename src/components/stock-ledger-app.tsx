@@ -484,7 +484,7 @@ export default function StockLedgerApp() {
       ? { ...tradeBase, id: editingTrade.id, traded_at: editingTrade.traded_at, created_at: editingTrade.created_at }
       : tradeBase;
     const nextTrades = editingTrade ? trades.map((item) => (item.id === trade.id ? trade : item)) : [trade, ...trades];
-    if (hasOversoldPosition(nextTrades)) {
+    if (hasOversoldPosition(nextTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
       return setFormError("此修改會造成某檔股票賣出股數超過持有股數，請先調整相關交易。");
     }
     const tagRows = parseTags(parsed.data.tags).map((name) => ({
@@ -528,7 +528,8 @@ export default function StockLedgerApp() {
     );
     setEditingTradeId(null);
     setTradeDraft({ ...emptyTradeDraft, portfolioId: portfolio.id });
-    setMessage(editingTrade ? "交易已更新。" : "交易已新增。");
+    setFormError("");
+    setMessage("儲存成功");
     setSheetMode(null);
   }
 
@@ -537,26 +538,43 @@ export default function StockLedgerApp() {
     if (!confirmed) return;
     setFormError("");
     const portfolio = portfolios.find((item) => item.id === trade.portfolio_id);
-    if (!portfolio) return setFormError("找不到帳本");
+    if (!portfolio) {
+      setMessage("刪除失敗：找不到帳本。");
+      return setFormError("找不到帳本");
+    }
     const nextTrades = trades.filter((item) => item.id !== trade.id);
-    if (hasOversoldPosition(nextTrades)) {
-      return setFormError("刪除此交易會造成後續賣出股數超過持股，請先調整相關交易。");
+    if (hasOversoldPosition(nextTrades, { portfolioId: trade.portfolio_id, stockId: trade.stock_id })) {
+      const error = "刪除此交易會造成後續賣出股數超過持股，請先調整相關交易。";
+      setMessage(error);
+      return setFormError(error);
     }
     const nextPortfolio = deleteTradeFromPortfolios(portfolios, trade, new Date().toISOString()).find((item) => item.id === portfolio.id);
-    if (!nextPortfolio) return setFormError("找不到帳本");
+    if (!nextPortfolio) {
+      setMessage("刪除失敗：找不到帳本。");
+      return setFormError("找不到帳本");
+    }
 
     if (supabase && hasSupabaseEnv) {
       const { error: tradeError } = await supabase.from("trades").delete().eq("id", trade.id);
-      if (tradeError) return setFormError(toUserError(tradeError, "刪除交易失敗。"));
+      if (tradeError) {
+        const error = toUserError(tradeError, "刪除交易失敗。");
+        setMessage(error);
+        return setFormError(error);
+      }
       const { error: portfolioError } = await supabase
         .from("portfolios")
         .update({ cash_balance: nextPortfolio.cash_balance, updated_at: nextPortfolio.updated_at })
         .eq("id", nextPortfolio.id);
-      if (portfolioError) return setFormError(toUserError(portfolioError, "更新帳本現金失敗。"));
+      if (portfolioError) {
+        const error = toUserError(portfolioError, "更新帳本現金失敗。");
+        setMessage(error);
+        return setFormError(error);
+      }
     }
 
     setTrades(nextTrades);
     setPortfolios((current) => current.map((item) => (item.id === nextPortfolio.id ? nextPortfolio : item)));
+    setFormError("");
     setMessage("交易已刪除。");
   }
 
@@ -754,7 +772,7 @@ export default function StockLedgerApp() {
         });
 
         const candidateTrades = [trade, ...nextTrades];
-        if (hasOversoldPosition(candidateTrades)) continue;
+        if (hasOversoldPosition(candidateTrades, { portfolioId: portfolio.id, stockId: stock.id })) continue;
         if (tradeType === "buy" && !settings.allow_negative_cash) {
           const currentPortfolio = nextPortfolios.find((item) => item.id === portfolio.id);
           if (!currentPortfolio || currentPortfolio.cash_balance < trade.net_amount) continue;
@@ -859,6 +877,15 @@ export default function StockLedgerApp() {
         <section className="mx-4 mt-3 flex items-start justify-between gap-3 rounded-md border border-mint/20 bg-white px-3 py-2 text-sm text-ink/70 shadow-soft">
           <p>{message}</p>
           <button className="shrink-0 text-ink/45" onClick={() => setMessage("")}>
+            <X size={16} />
+          </button>
+        </section>
+      )}
+
+      {formError && !sheetMode && (
+        <section className="mx-4 mt-3 flex items-start justify-between gap-3 rounded-md border border-coral/20 bg-coral/10 px-3 py-2 text-sm text-coral shadow-soft">
+          <p>{formError}</p>
+          <button className="shrink-0 text-coral/70" onClick={() => setFormError("")}>
             <X size={16} />
           </button>
         </section>
