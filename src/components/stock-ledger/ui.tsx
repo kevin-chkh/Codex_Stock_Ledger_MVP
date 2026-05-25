@@ -9,13 +9,36 @@ export function Metric({ label, value, strong, className = "" }: { label: string
   );
 }
 
-export function SmallCard({ label, value, valueClass = "" }: { label: string; value: string; valueClass?: string }) {
-  return (
-    <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+export function SmallCard({
+  label,
+  value,
+  valueClass = "",
+  hint,
+  onClick
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+  hint?: string;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink/45">{label}</p>
       <p className={"mt-2 text-lg font-bold leading-tight " + valueClass}>{value}</p>
-    </section>
+      {hint ? <p className="mt-2 text-xs text-ink/45">{hint}</p> : null}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button className="w-full rounded-lg border border-ink/10 bg-white p-4 text-left shadow-soft transition hover:border-mint/30" onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+
+  return <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">{content}</section>;
 }
 
 export function SmallMetric({ label, value, className = "" }: { label: string; value: string; className?: string }) {

@@ -4,18 +4,6 @@ import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Position } from "@/lib/types";
 import { ListSection, SmallMetric } from "./ui";
 
-function formatQuoteTime(value: string | null) {
-  if (!value) return "未更新";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "未更新";
-  return new Intl.DateTimeFormat("zh-TW", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  }).format(date);
-}
-
 export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit: (position: Position) => void }) {
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
   const [query, setQuery] = useState("");
@@ -92,11 +80,9 @@ export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit:
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="font-bold">{position.symbol + " " + position.name}</h3>
-                <p className="mt-1 text-sm text-ink/60">{position.quantity} 股 · 均價 {decimal(position.average_cost, 1)}</p>
-                <p className="mt-1 text-xs text-ink/45">現價更新 {formatQuoteTime(position.price_updated_at)}</p>
               </div>
               <button className="rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onEdit(position)}>
-                更新
+                調整
               </button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
