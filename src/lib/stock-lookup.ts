@@ -14,6 +14,7 @@ export type StockCatalogLoadResult = {
 const FALLBACK_STOCKS: StockCatalogItem[] = [
   { symbol: "0050", name: "\u5143\u5927\u53f0\u706350", industry: "ETF", market: "TWSE", isEtf: true },
   { symbol: "0056", name: "\u5143\u5927\u9ad8\u80a1\u606f", industry: "ETF", market: "TWSE", isEtf: true },
+  { symbol: "00881", name: "\u570b\u6cf0\u53f0\u70635G+", industry: "ETF", market: "TWSE", isEtf: true },
   { symbol: "00878", name: "\u570b\u6cf0\u6c38\u7e8c\u9ad8\u80a1\u606f", industry: "ETF", market: "TWSE", isEtf: true },
   { symbol: "00919", name: "\u7fa4\u76ca\u53f0\u7063\u7cbe\u9078\u9ad8\u606f", industry: "ETF", market: "TWSE", isEtf: true },
   { symbol: "2330", name: "\u53f0\u7a4d\u96fb", industry: "\u534a\u5c0e\u9ad4\u696d", market: "TWSE", isEtf: false },

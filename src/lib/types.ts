@@ -46,6 +46,17 @@ export type StockTag = {
   name: string;
 };
 
+export type PositionAdjustment = {
+  id: string;
+  user_id: string;
+  portfolio_id: string;
+  stock_id: string;
+  adjusted_quantity: number;
+  adjusted_cost: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Trade = {
   id: string;
   user_id: string;
@@ -94,6 +105,7 @@ export type Position = {
 
 export type DashboardMetrics = {
   cash: number;
+  holdingCost: number;
   holdingsValue: number;
   totalAssets: number;
   realizedProfit: number;

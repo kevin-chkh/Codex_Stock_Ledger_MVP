@@ -1,10 +1,10 @@
-import type { DashboardMetrics, Portfolio, Position, Stock, StockTag, Trade, UserSettings } from "./types";
+import type { DashboardMetrics, Portfolio, Position, PositionAdjustment, Stock, StockTag, Trade, UserSettings } from "./types";
 
 export const DEFAULT_SETTINGS: UserSettings = {
   user_id: "",
   fee_rate: 0.001425,
   tax_rate: 0.003,
-  minimum_fee: 20,
+  minimum_fee: 0,
   allow_negative_cash: false
 };
 
@@ -49,8 +49,9 @@ export function compareTradesChronologically(a: Trade, b: Trade) {
   return a.id.localeCompare(b.id);
 }
 
-export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: StockTag[] = []): Position[] {
+export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: StockTag[] = [], positionAdjustments: PositionAdjustment[] = []): Position[] {
   const stocksById = new Map(stocks.map((stock) => [stock.id, stock]));
+  const adjustmentsByKey = new Map(positionAdjustments.map((adjustment) => [`${adjustment.portfolio_id}:${adjustment.stock_id}`, adjustment]));
   const tagsByStockId = stockTags.reduce<Map<string, string[]>>((map, tag) => {
     const current = map.get(tag.stock_id) ?? [];
     current.push(tag.name);
@@ -97,13 +98,32 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
     drafts.set(key, draft);
   }
 
+  for (const adjustment of positionAdjustments) {
+    const key = `${adjustment.portfolio_id}:${adjustment.stock_id}`;
+    if (drafts.has(key)) continue;
+    drafts.set(key, {
+      portfolio_id: adjustment.portfolio_id,
+      stock_id: adjustment.stock_id,
+      quantity: adjustment.adjusted_quantity,
+      remaining_cost: adjustment.adjusted_cost,
+      realized_profit: 0
+    });
+  }
+
   return [...drafts.values()]
-    .filter((draft) => draft.quantity > 0 || draft.realized_profit !== 0)
+    .filter((draft) => {
+      const key = `${draft.portfolio_id}:${draft.stock_id}`;
+      const adjustment = adjustmentsByKey.get(key);
+      const quantity = adjustment ? adjustment.adjusted_quantity : draft.quantity;
+      return quantity > 0 || draft.realized_profit !== 0;
+    })
     .map((draft) => {
+      const key = `${draft.portfolio_id}:${draft.stock_id}`;
+      const adjustment = adjustmentsByKey.get(key);
       const stock = stocksById.get(draft.stock_id);
       const currentPrice = stock?.current_price ?? 0;
-      const openQuantity = Math.max(draft.quantity, 0);
-      const openCost = Math.max(roundMoney(draft.remaining_cost), 0);
+      const openQuantity = Math.max(roundMoney(adjustment?.adjusted_quantity ?? draft.quantity), 0);
+      const openCost = Math.max(roundMoney(adjustment?.adjusted_cost ?? draft.remaining_cost), 0);
       const marketValue = roundMoney(openQuantity * currentPrice);
       const unrealizedProfit = roundMoney(marketValue - openCost);
       const totalProfit = roundMoney(draft.realized_profit + unrealizedProfit);
@@ -146,6 +166,7 @@ export function validateSellQuantity(trades: Trade[], stockId: string, portfolio
 
 export function calculateDashboardMetrics(portfolios: Portfolio[], positions: Position[]): DashboardMetrics {
   const cash = roundMoney(portfolios.reduce((sum, portfolio) => sum + portfolio.cash_balance, 0));
+  const holdingCost = roundMoney(positions.reduce((sum, position) => sum + position.remaining_cost, 0));
   const holdingsValue = roundMoney(positions.reduce((sum, position) => sum + position.market_value, 0));
   const realizedProfit = roundMoney(positions.reduce((sum, position) => sum + position.realized_profit, 0));
   const unrealizedProfit = roundMoney(positions.reduce((sum, position) => sum + position.unrealized_profit, 0));
@@ -154,6 +175,7 @@ export function calculateDashboardMetrics(portfolios: Portfolio[], positions: Po
 
   return {
     cash,
+    holdingCost,
     holdingsValue,
     totalAssets: roundMoney(cash + holdingsValue),
     realizedProfit,

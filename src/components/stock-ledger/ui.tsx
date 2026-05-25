@@ -12,8 +12,8 @@ export function Metric({ label, value, strong, className = "" }: { label: string
 export function SmallCard({ label, value, valueClass = "" }: { label: string; value: string; valueClass?: string }) {
   return (
     <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-      <p className="text-xs text-ink/55">{label}</p>
-      <p className={"mt-2 text-lg font-bold " + valueClass}>{value}</p>
+      <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink/45">{label}</p>
+      <p className={"mt-2 text-lg font-bold leading-tight " + valueClass}>{value}</p>
     </section>
   );
 }
@@ -54,24 +54,29 @@ export function Field({
   value,
   onChange,
   type = "text",
-  placeholder
+  placeholder,
+  trailing
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   placeholder?: string;
+  trailing?: ReactNode;
 }) {
   return (
     <label className="block">
       <span className="text-sm font-semibold">{label}</span>
-      <input
-        className="mt-1 w-full rounded-md border border-ink/15 px-3 py-3 outline-none focus:border-mint"
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-      />
+      <div className="relative mt-1">
+        <input
+          className={"w-full rounded-md border border-ink/15 py-3 outline-none focus:border-mint " + (trailing ? "pl-3 pr-11" : "px-3")}
+          type={type}
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        {trailing ? <div className="absolute inset-y-0 right-0 flex items-center pr-3">{trailing}</div> : null}
+      </div>
     </label>
   );
 }

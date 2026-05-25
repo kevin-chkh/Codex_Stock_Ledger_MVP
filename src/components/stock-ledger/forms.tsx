@@ -1,7 +1,7 @@
-import { Download, Upload } from "lucide-react";
+import { Download, Upload, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { calculateTradeAmounts } from "@/lib/calculations";
-import { currency, profitClass } from "@/lib/format";
+import { currency, decimal, profitClass } from "@/lib/format";
 import { findStockByName, findStockBySymbol, fuzzySearchStocks, type StockCatalogItem } from "@/lib/stock-lookup";
 import type { CashMovementType, Portfolio, Position, Stock, TradeType, UserSettings } from "@/lib/types";
 import { Field, Segmented, Select, SubmitButton } from "./ui";
@@ -9,17 +9,19 @@ import { Field, Segmented, Select, SubmitButton } from "./ui";
 type TradeDraft = {
   portfolioId: string;
   type: TradeType;
+  buyMode: "unitPrice" | "totalAmount";
   symbol: string;
   name: string;
   quantity: string;
   unitPrice: string;
+  totalAmount: string;
   industry: string;
   tags: string;
 };
 
 type PortfolioDraft = { name: string; initialAmount: string; note: string };
 type CashDraft = { portfolioId: string; type: CashMovementType; amount: string; note: string };
-type StockDraft = { stockId: string; currentPrice: string; industry: string; tags: string };
+type StockDraft = { stockId: string; portfolioId: string; currentPrice: string; quantity: string; holdingCost: string; industry: string; tags: string };
 
 function StockSuggestionMenu({ items, onPick }: { items: StockCatalogItem[]; onPick: (item: StockCatalogItem) => void }) {
   return (
@@ -83,6 +85,16 @@ export function TradeForm({
       industry: found?.industry || value.industry
     }));
   };
+  const clearSelectedStock = () => {
+    setDraft((value) => ({
+      ...value,
+      symbol: "",
+      name: "",
+      industry: ""
+    }));
+    setShowSymbolSuggestions(false);
+    setShowNameSuggestions(false);
+  };
   const pickSymbolSuggestion = (item: StockCatalogItem) => {
     setDraft((value) => ({
       ...value,
@@ -102,10 +114,16 @@ export function TradeForm({
       industry: found?.industry || value.industry
     }));
   };
+  const resolvedUnitPrice =
+    draft.type === "buy" && draft.buyMode === "totalAmount"
+      ? Number(draft.quantity || 0) > 0
+        ? Number(draft.totalAmount || 0) / Number(draft.quantity || 0)
+        : 0
+      : Number(draft.unitPrice || 0);
   const preview = calculateTradeAmounts({
     type: draft.type,
     quantity: Number(draft.quantity || 0),
-    unitPrice: Number(draft.unitPrice || 0),
+    unitPrice: resolvedUnitPrice,
     settings
   });
   const estimatedRealizedProfit =
@@ -120,7 +138,27 @@ export function TradeForm({
           尚無帳本，請先新增帳本或資金
         </button>
       )}
-      <Segmented value={draft.type} onChange={(type) => setDraft((value) => ({ ...value, type: type as TradeType }))} options={[["buy", "買入"], ["sell", "賣出"]]} />
+      <Segmented
+        value={draft.type}
+        onChange={(type) =>
+          setDraft((value) => ({
+            ...value,
+            type: type as TradeType,
+            buyMode: type === "buy" ? value.buyMode : "unitPrice"
+          }))
+        }
+        options={[["buy", "買入"], ["sell", "賣出"]]}
+      />
+      {draft.type === "buy" && (
+        <Segmented
+          value={draft.buyMode}
+          onChange={(buyMode) => setDraft((value) => ({ ...value, buyMode: buyMode as "unitPrice" | "totalAmount" }))}
+          options={[
+            ["unitPrice", "輸入單價"],
+            ["totalAmount", "輸入總額"]
+          ]}
+        />
+      )}
       <Select value={selectedPortfolioId} onChange={(portfolioId) => setDraft((value) => ({ ...value, portfolioId }))} options={portfolios.map((item) => [item.id, item.name])} />
       <div className="relative">
         <Field
@@ -145,13 +183,32 @@ export function TradeForm({
             setShowNameSuggestions(Boolean(name.trim()));
           }}
           placeholder="台積電"
+          trailing={
+            draft.name ? (
+              <button type="button" className="rounded-full p-1 text-ink/45 hover:bg-paper hover:text-ink/70" onClick={clearSelectedStock} aria-label="清除股票名稱">
+                <X size={14} />
+              </button>
+            ) : null
+          }
         />
         {showNameSuggestions && nameSuggestions.length > 0 && (
           <StockSuggestionMenu items={nameSuggestions} onPick={pickSymbolSuggestion} />
         )}
       </div>
       <Field label="股數" type="number" value={draft.quantity} onChange={(quantity) => setDraft((value) => ({ ...value, quantity }))} />
-      <Field label="成交單價(股)" type="number" value={draft.unitPrice} onChange={(unitPrice) => setDraft((value) => ({ ...value, unitPrice }))} />
+      {draft.type === "buy" && draft.buyMode === "totalAmount" ? (
+        <>
+          <Field label="買入金額" type="number" value={draft.totalAmount} onChange={(totalAmount) => setDraft((value) => ({ ...value, totalAmount }))} />
+          <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-ink/60">自動計算均價</span>
+              <strong>{decimal(resolvedUnitPrice, 2)}</strong>
+            </div>
+          </section>
+        </>
+      ) : (
+        <Field label="成交單價(股)" type="number" value={draft.unitPrice} onChange={(unitPrice) => setDraft((value) => ({ ...value, unitPrice }))} />
+      )}
       <Field label="產業別" value={draft.industry} onChange={(industry) => setDraft((value) => ({ ...value, industry }))} placeholder="半導體業 / ETF" />
       {draft.type === "sell" && (
         <section className="rounded-lg border border-mint/20 bg-mint/5 p-3 text-sm">
@@ -223,12 +280,26 @@ export function CashForm({ draft, setDraft, portfolios, onSubmit }: { draft: Cas
 }
 
 export function StockForm({ draft, setDraft, onSubmit }: { draft: StockDraft; setDraft: (value: StockDraft | ((value: StockDraft) => StockDraft)) => void; onSubmit: () => void }) {
+  const quantity = Number(draft.quantity || 0);
+  const holdingCost = Number(draft.holdingCost || 0);
+  const averageCost = quantity > 0 ? holdingCost / quantity : 0;
+
   return (
     <div className="space-y-3">
       <Field label="目前價格" type="number" value={draft.currentPrice} onChange={(currentPrice) => setDraft((value) => ({ ...value, currentPrice }))} />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="持有庫存" type="number" value={draft.quantity} onChange={(quantity) => setDraft((value) => ({ ...value, quantity }))} />
+        <Field label="持有成本" type="number" value={draft.holdingCost} onChange={(holdingCost) => setDraft((value) => ({ ...value, holdingCost }))} />
+      </div>
+      <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
+        <div className="flex justify-between">
+          <span className="text-ink/60">每股均價</span>
+          <strong>{decimal(averageCost, 1)}</strong>
+        </div>
+      </section>
       <Field label="產業別" value={draft.industry} onChange={(industry) => setDraft((value) => ({ ...value, industry }))} />
       <Field label="標籤，以逗號分隔" value={draft.tags} onChange={(tags) => setDraft((value) => ({ ...value, tags }))} placeholder="核心, 長期" />
-      <SubmitButton onClick={onSubmit}>更新股票資訊</SubmitButton>
+      <SubmitButton onClick={onSubmit}>更新持股資訊</SubmitButton>
     </div>
   );
 }

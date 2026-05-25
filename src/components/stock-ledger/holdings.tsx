@@ -1,6 +1,6 @@
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { currency, percent, profitClass } from "@/lib/format";
+import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Position } from "@/lib/types";
 import { ListSection, SmallMetric } from "./ui";
 
@@ -92,9 +92,7 @@ export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit:
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="font-bold">{position.symbol + " " + position.name}</h3>
-                <p className="mt-1 text-sm text-ink/60">
-                  {position.quantity}  股 · 均價 {currency(position.average_cost)}
-                </p>
+                <p className="mt-1 text-sm text-ink/60">{position.quantity} 股 · 均價 {decimal(position.average_cost, 1)}</p>
                 <p className="mt-1 text-xs text-ink/45">現價更新 {formatQuoteTime(position.price_updated_at)}</p>
               </div>
               <button className="rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onEdit(position)}>
@@ -102,9 +100,10 @@ export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit:
               </button>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <SmallMetric label="現價" value={currency(position.current_price)} />
+              <SmallMetric label="持有成本" value={currency(position.remaining_cost)} />
+              <SmallMetric label="每股均價" value={decimal(position.average_cost, 1)} />
               <SmallMetric label="市值" value={currency(position.market_value)} />
-              <SmallMetric label="未實現" value={currency(position.unrealized_profit)} className={profitClass(position.unrealized_profit)} />
+              <SmallMetric label="預估損益" value={currency(position.unrealized_profit)} className={profitClass(position.unrealized_profit)} />
               <SmallMetric label="報酬率" value={percent(position.unrealized_return_rate)} className={profitClass(position.unrealized_profit)} />
             </div>
             <div className="mt-3 flex flex-wrap gap-2 text-xs">

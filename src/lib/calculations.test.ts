@@ -6,7 +6,7 @@ import {
   DEFAULT_SETTINGS,
   validateSellQuantity
 } from "./calculations";
-import type { Portfolio, Stock, Trade } from "./types";
+import type { Portfolio, PositionAdjustment, Stock, Trade } from "./types";
 
 const stock: Stock = {
   id: "stock-1",
@@ -45,18 +45,18 @@ describe("calculateTradeAmounts", () => {
   it("calculates buy total cost with minimum fee", () => {
     expect(calculateTradeAmounts({ type: "buy", quantity: 100, unitPrice: 100, settings: DEFAULT_SETTINGS })).toEqual({
       grossAmount: 10000,
-      fee: 20,
+      fee: 14.25,
       tax: 0,
-      netAmount: 10020
+      netAmount: 10014.25
     });
   });
 
   it("calculates sell net amount with tax", () => {
     expect(calculateTradeAmounts({ type: "sell", quantity: 100, unitPrice: 100, settings: DEFAULT_SETTINGS })).toEqual({
       grossAmount: 10000,
-      fee: 20,
+      fee: 14.25,
       tax: 30,
-      netAmount: 9950
+      netAmount: 9955.75
     });
   });
 
@@ -95,6 +95,27 @@ describe("buildPositions", () => {
     expect(positions[0].realized_profit).toBe(950.5);
     expect(positions[0].unrealized_profit).toBe(-30);
     expect(positions[0].price_updated_at).toBeNull();
+  });
+
+  it("applies position adjustments to open quantity and cost", () => {
+    const adjustments: PositionAdjustment[] = [
+      {
+        id: "adj-1",
+        user_id: "user-1",
+        portfolio_id: "portfolio-1",
+        stock_id: "stock-1",
+        adjusted_quantity: 80,
+        adjusted_cost: 8640,
+        created_at: "",
+        updated_at: ""
+      }
+    ];
+
+    const positions = buildPositions([trade({ quantity: 100, net_amount: 10014.25 })], [stock], [], adjustments);
+
+    expect(positions[0].quantity).toBe(80);
+    expect(positions[0].remaining_cost).toBe(8640);
+    expect(positions[0].average_cost).toBe(108);
   });
 
   it("rejects selling more than current holdings", () => {
@@ -152,6 +173,7 @@ describe("calculateDashboardMetrics", () => {
     const metrics = calculateDashboardMetrics([portfolio], [position]);
 
     expect(metrics.cash).toBe(50000);
+    expect(metrics.holdingCost).toBe(10020);
     expect(metrics.holdingsValue).toBe(11000);
     expect(metrics.totalAssets).toBe(61000);
     expect(metrics.unrealizedProfit).toBe(980);

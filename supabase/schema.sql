@@ -36,7 +36,7 @@ create table if not exists public.stocks (
   user_id uuid not null references auth.users(id) on delete cascade,
   symbol text not null,
   name text not null,
-  market text not null default 'TW',
+  market text not null default 'TWSE',
   industry text,
   current_price numeric(18, 2) not null default 0,
   price_updated_at timestamptz,
@@ -70,11 +70,23 @@ create table if not exists public.trades (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.position_adjustments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  portfolio_id uuid not null references public.portfolios(id) on delete cascade,
+  stock_id uuid not null references public.stocks(id) on delete cascade,
+  adjusted_quantity numeric(18, 4) not null default 0 check (adjusted_quantity >= 0),
+  adjusted_cost numeric(18, 2) not null default 0 check (adjusted_cost >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, portfolio_id, stock_id)
+);
+
 create table if not exists public.settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
   fee_rate numeric(10, 8) not null default 0.001425,
   tax_rate numeric(10, 8) not null default 0.003,
-  minimum_fee numeric(18, 2) not null default 20,
+  minimum_fee numeric(18, 2) not null default 0,
   allow_negative_cash boolean not null default false
 );
 
@@ -84,6 +96,7 @@ alter table public.cash_movements enable row level security;
 alter table public.stocks enable row level security;
 alter table public.stock_tags enable row level security;
 alter table public.trades enable row level security;
+alter table public.position_adjustments enable row level security;
 alter table public.settings enable row level security;
 
 create policy "profiles own rows" on public.profiles
@@ -102,6 +115,9 @@ create policy "stock tags own rows" on public.stock_tags
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create policy "trades own rows" on public.trades
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "position adjustments own rows" on public.position_adjustments
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create policy "settings own rows" on public.settings

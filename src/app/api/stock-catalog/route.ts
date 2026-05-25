@@ -61,6 +61,30 @@ async function fetchJsonRows(url: string): Promise<Record<string, unknown>[]> {
   return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
 }
 
+async function fetchTwseTableRows(url: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(url, {
+    headers: { accept: "application/json" },
+    cache: "no-store"
+  });
+  if (!response.ok) throw new Error(`catalog request failed: ${url}`);
+
+  const payload = (await response.json()) as {
+    fields?: string[];
+    data?: unknown[][];
+  };
+
+  if (!Array.isArray(payload.fields) || !Array.isArray(payload.data)) return [];
+
+  return payload.data
+    .filter((row): row is unknown[] => Array.isArray(row))
+    .map((row) =>
+      payload.fields!.reduce<Record<string, unknown>>((record, field, index) => {
+        record[field] = row[index];
+        return record;
+      }, {})
+    );
+}
+
 function readString(row: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = row[key];
@@ -77,8 +101,8 @@ function normalizeIndustry(symbol: string, rawIndustry: string) {
 }
 
 function normalizeCatalogRow(row: Record<string, unknown>, market: StockCatalogItem["market"]): StockCatalogItem | null {
-  const symbol = readString(row, ["公司代號", "股票代號", "SecuritiesCompanyCode", "Code", "有價證券代號"]);
-  const name = readString(row, ["公司名稱", "股票名稱", "CompanyName", "Name", "有價證券名稱"]);
+  const symbol = readString(row, ["公司代號", "股票代號", "證券代號", "SecuritiesCompanyCode", "Code", "有價證券代號"]);
+  const name = readString(row, ["公司簡稱", "證券簡稱", "股票簡稱", "公司名稱", "股票名稱", "CompanyName", "Name", "有價證券名稱"]);
   const rawIndustry = readString(row, ["產業別", "IndustryCategory", "Industry", "產業類別"]);
 
   if (!symbol || !name) return null;
@@ -94,6 +118,11 @@ function normalizeCatalogRow(row: Record<string, unknown>, market: StockCatalogI
 
 async function fetchTwseCatalog() {
   const rows = await fetchJsonRows("https://openapi.twse.com.tw/v1/opendata/t187ap03_L");
+  return rows.map((row) => normalizeCatalogRow(row, "TWSE")).filter(Boolean) as StockCatalogItem[];
+}
+
+async function fetchTwseEtfCatalog() {
+  const rows = await fetchTwseTableRows("https://www.twse.com.tw/rwd/zh/ETF/list?response=json");
   return rows.map((row) => normalizeCatalogRow(row, "TWSE")).filter(Boolean) as StockCatalogItem[];
 }
 
@@ -129,12 +158,13 @@ function mergeCatalog(items: StockCatalogItem[]) {
 
 export async function GET() {
   try {
-    const [twseRows, tpexRows, tpexEmergingRows] = await Promise.all([
+    const [twseRows, twseEtfRows, tpexRows, tpexEmergingRows] = await Promise.all([
       fetchTwseCatalog(),
+      fetchTwseEtfCatalog(),
       fetchTpexCatalog(),
       fetchTpexEmergingCatalog()
     ]);
-    const merged = mergeCatalog([...twseRows, ...tpexRows, ...tpexEmergingRows]);
+    const merged = mergeCatalog([...twseRows, ...twseEtfRows, ...tpexRows, ...tpexEmergingRows]);
     return NextResponse.json(merged, { status: 200 });
   } catch (error) {
     return NextResponse.json(
