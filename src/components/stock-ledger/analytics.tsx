@@ -217,10 +217,7 @@ export function Analytics({
             label="目前："
             value={selectedPortfolioId}
             onChange={onPortfolioChange}
-            options={[
-              ["all", "全部帳本"],
-              ...portfolios.map((portfolio) => [portfolio.id, portfolio.name])
-            ]}
+            options={portfolios.map((portfolio) => [portfolio.id, portfolio.name])}
           />
         </div>
         <label className="block">

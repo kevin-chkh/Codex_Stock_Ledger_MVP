@@ -29,10 +29,11 @@ export function Dashboard({
   onEditTrade: (trade: Trade) => void;
 }) {
   const [detailMode, setDetailMode] = useState<"realized" | "unrealized" | null>(null);
-  const topPositions = positions
+  const [showAllPositions, setShowAllPositions] = useState(false);
+  const rankedPositions = positions
     .filter((position) => position.quantity > 0)
-    .sort((a, b) => b.holding_cost - a.holding_cost)
-    .slice(0, 4);
+    .sort((a, b) => b.holding_cost - a.holding_cost);
+  const topPositions = showAllPositions ? rankedPositions : rankedPositions.slice(0, 4);
   const recentTrades = trades.slice(0, 5);
   const stockMap = new Map(stocks.map((stock) => [stock.id, stock]));
   const profitBreakdown = useMemo(() => {
@@ -95,9 +96,6 @@ export function Dashboard({
               value={selectedPortfolioId}
               onChange={(event) => onPortfolioChange(event.target.value)}
             >
-              <option className="text-ink" value="all">
-                全部帳本
-              </option>
               {portfolios.map((portfolio) => (
                 <option className="text-ink" key={portfolio.id} value={portfolio.id}>
                   {portfolio.name}
@@ -176,7 +174,20 @@ export function Dashboard({
           ))}
         </ListSection>
       )}
-      <ListSection title="持股排行" empty="尚無持股">
+      <ListSection
+        title={showAllPositions ? `持股排行 ${rankedPositions.length} 檔` : "持股排行"}
+        empty="尚無持股"
+      >
+        {rankedPositions.length > 4 ? (
+          <div className="mb-1 flex justify-end">
+            <button
+              className="rounded-md border border-ink/10 px-3 py-2 text-xs font-semibold text-ink/75"
+              onClick={() => setShowAllPositions((current) => !current)}
+            >
+              {showAllPositions ? "收合" : "全部展開"}
+            </button>
+          </div>
+        ) : null}
         {topPositions.map((position) => (
           <div key={position.stock_id} className="rounded-lg border border-ink/10 bg-paper/35 p-3">
             <div className="flex items-start justify-between gap-3">

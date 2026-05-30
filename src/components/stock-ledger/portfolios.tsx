@@ -5,26 +5,27 @@ import { ListSection } from "./ui";
 export function Portfolios({
   portfolios,
   cashMovements,
+  selectedPortfolioId,
   onNew,
   onCash,
   onRename,
-  onDelete
+  onDelete,
+  onSelectDefault
 }: {
   portfolios: Portfolio[];
   cashMovements: CashMovement[];
+  selectedPortfolioId: string;
   onNew: () => void;
-  onCash: () => void;
+  onCash: (portfolioId: string) => void;
   onRename: (portfolio: Portfolio) => void;
   onDelete: (portfolio: Portfolio) => void;
+  onSelectDefault: (portfolioId: string) => void;
 }) {
   return (
     <div className="space-y-4">
-      <section className="grid grid-cols-2 gap-3">
-        <button className="rounded-lg bg-ink px-4 py-4 text-left font-semibold text-white shadow-soft" onClick={onNew}>
+      <section>
+        <button className="w-full rounded-lg bg-ink px-4 py-4 text-left font-semibold text-white shadow-soft" onClick={onNew}>
           新增帳本
-        </button>
-        <button className="rounded-lg bg-ink px-4 py-4 text-left font-semibold text-white shadow-soft" onClick={onCash}>
-          資金異動
         </button>
       </section>
       <ListSection title={`帳本 ${portfolios.length} 本`} empty="尚無帳本">
@@ -38,6 +39,20 @@ export function Portfolios({
                   <p className="mt-1 text-xs text-ink/50">{movementCount} 筆資金異動</p>
                 </div>
                 <div className="flex shrink-0 gap-2">
+                  <button
+                    className={
+                      "rounded-md px-3 py-2 text-sm " +
+                      (selectedPortfolioId === portfolio.id
+                        ? "border border-mint/20 bg-mint/10 font-semibold text-mint"
+                        : "border border-ink/10 bg-white")
+                    }
+                    onClick={() => onSelectDefault(portfolio.id)}
+                  >
+                    {selectedPortfolioId === portfolio.id ? "預設帳本" : "設為預設"}
+                  </button>
+                  <button className="rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onCash(portfolio.id)}>
+                    資金異動
+                  </button>
                   <button className="rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onRename(portfolio)}>
                     重新命名
                   </button>
