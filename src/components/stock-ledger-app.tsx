@@ -29,11 +29,11 @@ import { ConfirmSheet, ListSection, Row } from "@/components/stock-ledger/ui";
 import { Trades } from "@/components/stock-ledger/trades";
 import { Holdings } from "@/components/stock-ledger/holdings";
 import { Analytics } from "@/components/stock-ledger/analytics";
-import { CashForm, PortfolioForm, SettingsForm, StockAdjustForm, StockPriceForm, TradeForm } from "@/components/stock-ledger/forms";
+import { CashForm, PortfolioForm, SettingsForm, StockAdjustForm, TradeForm } from "@/components/stock-ledger/forms";
 import { Portfolios } from "@/components/stock-ledger/portfolios";
 
 type Tab = "dashboard" | "portfolios" | "trades" | "holdings" | "analytics";
-type SheetMode = "actions" | "trade" | "cash" | "portfolio" | "stockActions" | "stockPrice" | "stockAdjust" | "settings" | null;
+type SheetMode = "actions" | "trade" | "cash" | "portfolio" | "stockAdjust" | "settings" | null;
 type TradeDraft = {
   portfolioId: string;
   type: TradeType;
@@ -73,6 +73,7 @@ type CsvImportSummary = {
 };
 type ConfirmState =
   | { kind: "deleteTrade"; trade: Trade }
+  | { kind: "deletePortfolio"; portfolio: Portfolio }
   | { kind: "importJson"; snapshot: LocalSnapshot }
   | { kind: "adjustCost"; parsed: z.infer<typeof stockSchema> }
   | null;
@@ -191,6 +192,7 @@ export default function StockLedgerApp() {
   const [quoteRefreshing, setQuoteRefreshing] = useState(false);
   const [formError, setFormError] = useState("");
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
+  const [editingPortfolioId, setEditingPortfolioId] = useState<string | null>(null);
   const [selectedPortfolioId, setSelectedPortfolioId] = useState("all");
   const [demoBannerDismissed, setDemoBannerDismissed] = useState(false);
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(emptyTradeDraft);
@@ -200,7 +202,6 @@ export default function StockLedgerApp() {
   const [stockAdjustBaseline, setStockAdjustBaseline] = useState({ quantity: 0, holdingCost: 0 });
   const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
-  const [selectedStockActionPosition, setSelectedStockActionPosition] = useState<Position | null>(null);
 
   const positions = useMemo(() => buildPositions(trades, stocks, stockTags, positionAdjustments), [trades, stocks, stockTags, positionAdjustments]);
   const catalogBySymbol = useMemo(() => new Map(stockCatalog.map((item) => [item.symbol, item])), [stockCatalog]);
@@ -538,35 +539,113 @@ export default function StockLedgerApp() {
     if (typeof window !== "undefined") window.localStorage.setItem(DEMO_BANNER_DISMISSED_KEY, "1");
   }
 
-  async function createPortfolio() {
+  function openNewPortfolio() {
+    setEditingPortfolioId(null);
+    setPortfolioDraft({ name: "", initialAmount: "", note: "" });
+    setFormError("");
+    setSheetMode("portfolio");
+  }
+
+  function openRenamePortfolio(portfolio: Portfolio) {
+    setEditingPortfolioId(portfolio.id);
+    setPortfolioDraft({
+      name: portfolio.name,
+      initialAmount: String(portfolio.initial_amount),
+      note: portfolio.note ?? ""
+    });
+    setFormError("");
+    setSheetMode("portfolio");
+  }
+
+  async function savePortfolio() {
     setFormError("");
     const parsed = portfolioSchema.safeParse(portfolioDraft);
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
-    const id = uid();
     const now = new Date().toISOString();
-    const amount = parsed.data.initialAmount;
-    const item: Portfolio = {
-      id,
-      user_id: userId ?? "demo",
-      name: parsed.data.name,
-      currency: "TWD",
-      initial_amount: amount,
-      cash_balance: amount,
-      total_deposits: amount,
-      total_withdrawals: 0,
-      note: parsed.data.note || null,
-      created_at: now,
-      updated_at: now
-    };
+
+    if (editingPortfolioId) {
+      const currentPortfolio = portfolios.find((item) => item.id === editingPortfolioId);
+      if (!currentPortfolio) return setFormError("找不到帳本");
+      const nextPortfolio: Portfolio = {
+        ...currentPortfolio,
+        name: parsed.data.name,
+        note: parsed.data.note || null,
+        updated_at: now
+      };
+      if (supabase && hasSupabaseEnv) {
+        const { error } = await supabase
+          .from("portfolios")
+          .update({ name: nextPortfolio.name, note: nextPortfolio.note, updated_at: nextPortfolio.updated_at })
+          .eq("id", editingPortfolioId);
+        if (error) return setFormError(toUserError(error, "重新命名帳本失敗。"));
+      }
+      setPortfolios((current) => current.map((item) => (item.id === editingPortfolioId ? nextPortfolio : item)));
+      setMessage("帳本已重新命名。");
+    } else {
+      const id = uid();
+      const amount = parsed.data.initialAmount;
+      const item: Portfolio = {
+        id,
+        user_id: userId ?? "demo",
+        name: parsed.data.name,
+        currency: "TWD",
+        initial_amount: amount,
+        cash_balance: amount,
+        total_deposits: amount,
+        total_withdrawals: 0,
+        note: parsed.data.note || null,
+        created_at: now,
+        updated_at: now
+      };
+
+      if (supabase && hasSupabaseEnv) {
+        const { error } = await supabase.from("portfolios").insert(item);
+        if (error) return setFormError(toUserError(error, "新增帳本失敗。"));
+      }
+      setPortfolios((current) => [...current, item]);
+      setMessage("帳本已新增。");
+    }
+
+    setEditingPortfolioId(null);
+    setPortfolioDraft({ name: "", initialAmount: "", note: "" });
+    setSheetMode(null);
+  }
+
+  function requestDeletePortfolio(portfolio: Portfolio) {
+    setConfirmState({ kind: "deletePortfolio", portfolio });
+  }
+
+  async function deletePortfolio(portfolio: Portfolio) {
+    setFormError("");
+    const relatedTrades = trades.filter((item) => item.portfolio_id === portfolio.id);
+    const relatedCashMovements = cashMovements.filter((item) => item.portfolio_id === portfolio.id);
+    const relatedAdjustments = positionAdjustments.filter((item) => item.portfolio_id === portfolio.id);
 
     if (supabase && hasSupabaseEnv) {
-      const { error } = await supabase.from("portfolios").insert(item);
-      if (error) return setFormError(toUserError(error, "新增帳本失敗。"));
+      if (relatedTrades.length) {
+        const { error } = await supabase.from("trades").delete().eq("portfolio_id", portfolio.id);
+        if (error) return setFormError(toUserError(error, "刪除帳本交易失敗。"));
+      }
+      if (relatedCashMovements.length) {
+        const { error } = await supabase.from("cash_movements").delete().eq("portfolio_id", portfolio.id);
+        if (error) return setFormError(toUserError(error, "刪除帳本資金異動失敗。"));
+      }
+      if (relatedAdjustments.length) {
+        const { error } = await supabase.from("position_adjustments").delete().eq("portfolio_id", portfolio.id);
+        if (error && !String(error.message).includes("position_adjustments")) {
+          return setFormError(toUserError(error, "刪除帳本成本校正失敗。"));
+        }
+      }
+      const { error } = await supabase.from("portfolios").delete().eq("id", portfolio.id);
+      if (error) return setFormError(toUserError(error, "刪除帳本失敗。"));
     }
-    setPortfolios((current) => [...current, item]);
-    setPortfolioDraft({ name: "", initialAmount: "", note: "" });
-    setMessage("帳本已新增。");
-    setSheetMode(null);
+
+    setTrades((current) => current.filter((item) => item.portfolio_id !== portfolio.id));
+    setCashMovements((current) => current.filter((item) => item.portfolio_id !== portfolio.id));
+    setPositionAdjustments((current) => current.filter((item) => item.portfolio_id !== portfolio.id));
+    setPortfolios((current) => current.filter((item) => item.id !== portfolio.id));
+    if (selectedPortfolioId === portfolio.id) setSelectedPortfolioId("all");
+    setMessage("帳本已刪除。");
   }
 
   async function createCashMovement() {
@@ -839,19 +918,6 @@ export default function StockLedgerApp() {
     setSheetMode("trade");
   }
 
-  function openStockPriceEditor(position: Position) {
-    setStockDraft({
-      stockId: position.stock_id,
-      portfolioId: position.portfolio_id,
-      currentPrice: String(position.current_price),
-      quantity: String(position.quantity),
-      holdingCost: String(position.holding_cost),
-      industry: position.industry === "未分類" ? "" : position.industry,
-      tags: position.tags.join(", ")
-    });
-    setSheetMode("stockPrice");
-  }
-
   function openStockAdjustEditor(position: Position) {
     const adjustment = positionAdjustments.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
     setStockDraft({
@@ -868,42 +934,6 @@ export default function StockLedgerApp() {
       holdingCost: position.holding_cost
     });
     setSheetMode("stockAdjust");
-  }
-
-  function openStockActions(position: Position) {
-    setSelectedStockActionPosition(position);
-    setSheetMode("stockActions");
-  }
-
-  async function updateStockPrice() {
-    setFormError("");
-    const stock = stocks.find((item) => item.id === stockDraft.stockId);
-    if (!stock) return setFormError("找不到股票");
-    const nextPrice = Number(stockDraft.currentPrice || 0);
-    if (nextPrice < 0) return setFormError("價格不可小於 0。");
-
-    const nextStock = {
-      ...stock,
-      current_price: nextPrice,
-      price_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    if (supabase && hasSupabaseEnv) {
-      const { error: stockError } = await supabase
-        .from("stocks")
-        .update({
-          current_price: nextStock.current_price,
-          price_updated_at: nextStock.price_updated_at,
-          updated_at: nextStock.updated_at
-        })
-        .eq("id", stock.id);
-      if (stockError) return setFormError(toUserError(stockError, "更新現價失敗。"));
-    }
-
-    setStocks((current) => current.map((item) => (item.id === stock.id ? nextStock : item)));
-    setMessage("現價已更新。");
-    setSheetMode(null);
   }
 
   function requestStockAdjustment() {
@@ -940,11 +970,9 @@ export default function StockLedgerApp() {
       } else {
         const { error: adjustmentError } = await adjustmentQuery.upsert(nextAdjustment);
         if (adjustmentError) {
-          return setFormError(
-            String(adjustmentError.message).includes("position_adjustments")
-              ? "尚未建立持股調整資料表，請先執行最新 schema.sql。"
-              : toUserError(adjustmentError, "更新持股調整失敗。")
-          );
+          if (!String(adjustmentError.message).includes("position_adjustments")) {
+            return setFormError(toUserError(adjustmentError, "更新持股調整失敗。"));
+          }
         }
       }
     }
@@ -953,7 +981,7 @@ export default function StockLedgerApp() {
       const filtered = current.filter((item) => !(item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id));
       return parsed.quantity === 0 && parsed.holdingCost === 0 ? filtered : [...filtered, nextAdjustment];
     });
-    setMessage("成本校正已更新。");
+    setMessage(supabase && hasSupabaseEnv ? "成本校正已更新。" : "成本校正已更新。");
     setConfirmState(null);
     setSheetMode(null);
   }
@@ -1251,7 +1279,14 @@ export default function StockLedgerApp() {
           />
         )}
         {activeTab === "portfolios" && (
-          <Portfolios portfolios={portfolios} cashMovements={cashMovements} onNew={() => setSheetMode("portfolio")} onCash={() => setSheetMode("cash")} />
+          <Portfolios
+            portfolios={portfolios}
+            cashMovements={cashMovements}
+            onNew={openNewPortfolio}
+            onCash={() => setSheetMode("cash")}
+            onRename={openRenamePortfolio}
+            onDelete={requestDeletePortfolio}
+          />
         )}
         {activeTab === "trades" && (
           <Trades
@@ -1270,8 +1305,7 @@ export default function StockLedgerApp() {
             portfolios={portfolios}
             selectedPortfolioId={selectedPortfolioId}
             onPortfolioChange={setSelectedPortfolioId}
-            onUpdatePrice={openStockPriceEditor}
-            onAdjustCost={openStockActions}
+            onAdjustCost={openStockAdjustEditor}
           />
         )}
         {activeTab === "analytics" && (
@@ -1319,22 +1353,6 @@ export default function StockLedgerApp() {
                 onCash={() => setSheetMode("cash")}
               />
             )}
-            {sheetMode === "stockActions" && selectedStockActionPosition && (
-              <div className="grid gap-3">
-                <button
-                  className="flex min-h-14 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-left font-semibold text-white"
-                  onClick={() => openStockPriceEditor(selectedStockActionPosition)}
-                >
-                  更新現價
-                </button>
-                <button
-                  className="flex min-h-14 items-center gap-3 rounded-lg border-2 border-ink bg-white px-4 py-3 text-left font-semibold text-ink"
-                  onClick={() => openStockAdjustEditor(selectedStockActionPosition)}
-                >
-                  校正成本
-                </button>
-              </div>
-            )}
             {sheetMode === "trade" && (
               <TradeForm
                 draft={tradeDraft}
@@ -1349,9 +1367,16 @@ export default function StockLedgerApp() {
                 submitLabel={editingTradeId ? "更新交易" : "儲存交易"}
               />
             )}
-            {sheetMode === "portfolio" && <PortfolioForm draft={portfolioDraft} setDraft={setPortfolioDraft} onSubmit={createPortfolio} />}
+            {sheetMode === "portfolio" && (
+              <PortfolioForm
+                draft={portfolioDraft}
+                setDraft={setPortfolioDraft}
+                onSubmit={savePortfolio}
+                submitLabel={editingPortfolioId ? "儲存重新命名" : "新增帳本"}
+                showInitialAmount={!editingPortfolioId}
+              />
+            )}
             {sheetMode === "cash" && <CashForm draft={cashDraft} setDraft={setCashDraft} portfolios={portfolios} onSubmit={createCashMovement} />}
-            {sheetMode === "stockPrice" && <StockPriceForm draft={stockDraft} setDraft={setStockDraft} onSubmit={updateStockPrice} />}
             {sheetMode === "stockAdjust" && (
               <StockAdjustForm draft={stockDraft} baseline={stockAdjustBaseline} setDraft={setStockDraft} onSubmit={requestStockAdjustment} />
             )}
@@ -1384,6 +1409,17 @@ export default function StockLedgerApp() {
           tone="danger"
           onCancel={() => setConfirmState(null)}
           onConfirm={() => void deleteTrade(confirmState.trade).finally(() => setConfirmState(null))}
+        />
+      )}
+
+      {confirmState?.kind === "deletePortfolio" && (
+        <ConfirmSheet
+          title="刪除帳本"
+          body={`刪除「${confirmState.portfolio.name}」後，相關交易、資金異動與成本校正都會一起移除，無法復原。`}
+          confirmLabel="確認刪除"
+          tone="danger"
+          onCancel={() => setConfirmState(null)}
+          onConfirm={() => void deletePortfolio(confirmState.portfolio).finally(() => setConfirmState(null))}
         />
       )}
 
@@ -1479,10 +1515,8 @@ function sheetTitle(mode: SheetMode) {
     actions: "新增",
     trade: "新增交易",
     cash: "資金異動",
-    portfolio: "新增帳本",
-    stockPrice: "更新現價",
+    portfolio: "帳本設定",
     stockAdjust: "校正成本",
-    stockActions: "調整持股",
     settings: "設定"
   };
   return mode ? titles[mode] : "";

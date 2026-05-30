@@ -1,5 +1,5 @@
-import { LayoutGrid, RefreshCw, Rows3, Search, SlidersHorizontal } from "lucide-react";
-import { useMemo, useState } from "react";
+import { LayoutGrid, Rows3, Search, SlidersHorizontal } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Portfolio, Position } from "@/lib/types";
 import { ListSection, PortfolioScopePicker } from "./ui";
@@ -9,14 +9,12 @@ export function Holdings({
   portfolios,
   selectedPortfolioId,
   onPortfolioChange,
-  onUpdatePrice,
   onAdjustCost
 }: {
   positions: Position[];
   portfolios: Portfolio[];
   selectedPortfolioId: string;
   onPortfolioChange: (portfolioId: string) => void;
-  onUpdatePrice: (position: Position) => void;
   onAdjustCost: (position: Position) => void;
 }) {
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
@@ -25,6 +23,7 @@ export function Holdings({
   const [industryFilter, setIndustryFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"marketValue" | "returnRate" | "profit" | "symbol">("marketValue");
   const [viewMode, setViewMode] = useState<"compact" | "detailed">("detailed");
+  const [expandedCount, setExpandedCount] = useState(5);
   const feeSummary = useMemo(
     () => ({
       fee: openPositions.reduce((sum, position) => sum + position.paid_fee, 0),
@@ -58,6 +57,13 @@ export function Holdings({
         return b.market_value - a.market_value;
       });
   }, [industryFilter, openPositions, query, sortBy, tagFilter]);
+
+  useEffect(() => {
+    setExpandedCount(5);
+  }, [query, tagFilter, industryFilter, sortBy, selectedPortfolioId, viewMode]);
+
+  const visiblePositions = useMemo(() => filteredPositions.slice(0, expandedCount), [filteredPositions, expandedCount]);
+  const hasMorePositions = filteredPositions.length > expandedCount;
 
   return (
     <div className="space-y-4">
@@ -142,16 +148,13 @@ export function Holdings({
         </div>
       </section>
       <ListSection title={"持股 " + filteredPositions.length + " 檔"} empty={openPositions.length ? "沒有符合條件的持股" : "尚無持股"}>
-        {filteredPositions.map((position) =>
+        {visiblePositions.map((position) =>
           viewMode === "compact" ? (
             <article key={position.stock_id} className="rounded-lg border border-ink/10 bg-white px-3 py-3 shadow-soft">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <h3 className="truncate font-semibold">{position.symbol + " " + position.name}</h3>
-                    <button className="shrink-0 rounded-md border border-ink/10 p-2 text-ink/70" onClick={() => onUpdatePrice(position)} aria-label={"更新現價 " + position.symbol + " " + position.name}>
-                      <RefreshCw size={16} />
-                    </button>
                     <button className="shrink-0 rounded-md border border-ink/10 p-2 text-ink/70" onClick={() => onAdjustCost(position)} aria-label={"校正成本 " + position.symbol + " " + position.name}>
                       <SlidersHorizontal size={16} />
                     </button>
@@ -224,6 +227,40 @@ export function Holdings({
             </article>
           )
         )}
+        {filteredPositions.length > 5 ? (
+          <div className="rounded-xl border border-dashed border-ink/15 bg-paper/60 px-4 py-4">
+            <p className="text-sm font-medium text-ink">
+              {hasMorePositions ? `還有 ${filteredPositions.length - visiblePositions.length} 檔未展開` : `已展開全部 ${filteredPositions.length} 檔`}
+            </p>
+            <p className="mt-1 text-xs text-ink/55">目前顯示 {visiblePositions.length} / {filteredPositions.length} 檔</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {hasMorePositions ? (
+                <button
+                  className="rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white"
+                  onClick={() => setExpandedCount((current) => Math.min(current + 5, filteredPositions.length))}
+                >
+                  繼續展開 5 檔
+                </button>
+              ) : null}
+              {hasMorePositions ? (
+                <button
+                  className="rounded-lg border border-ink/10 bg-white px-4 py-3 text-sm"
+                  onClick={() => setExpandedCount(filteredPositions.length)}
+                >
+                  全部展開
+                </button>
+              ) : null}
+              {visiblePositions.length > 5 ? (
+                <button
+                  className="rounded-lg border border-ink/10 bg-white px-4 py-3 text-sm"
+                  onClick={() => setExpandedCount(5)}
+                >
+                  收合回前 5 檔
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </ListSection>
     </div>
   );
