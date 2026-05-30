@@ -1,49 +1,73 @@
+import type { CashMovement, Portfolio } from "@/lib/types";
 import { currency } from "@/lib/format";
-import type { CashMovement, CashMovementType, Portfolio } from "@/lib/types";
-import { ListSection, Row } from "./ui";
+import { ListSection } from "./ui";
 
 export function Portfolios({
   portfolios,
   cashMovements,
   onNew,
-  onCash
+  onCash,
+  onRename,
+  onDelete
 }: {
   portfolios: Portfolio[];
   cashMovements: CashMovement[];
   onNew: () => void;
   onCash: () => void;
+  onRename: (portfolio: Portfolio) => void;
+  onDelete: (portfolio: Portfolio) => void;
 }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <button className="rounded-lg bg-mint px-4 py-3 font-semibold text-white" onClick={onNew}>
+      <section className="grid grid-cols-2 gap-3">
+        <button className="rounded-lg bg-ink px-4 py-4 text-left font-semibold text-white shadow-soft" onClick={onNew}>
           新增帳本
         </button>
-        <button className="rounded-lg bg-ink px-4 py-3 font-semibold text-white" onClick={onCash}>
+        <button className="rounded-lg bg-ink px-4 py-4 text-left font-semibold text-white shadow-soft" onClick={onCash}>
           資金異動
         </button>
-      </div>
-      <ListSection title="帳本" empty="尚無帳本">
-        {portfolios.map((portfolio) => (
-          <Row
-            key={portfolio.id}
-            title={portfolio.name}
-            subtitle={"投入 " + currency(portfolio.total_deposits) + " · 轉出 " + currency(portfolio.total_withdrawals)}
-            right={currency(portfolio.cash_balance)}
-          />
-        ))}
-      </ListSection>
-      <ListSection title="資金異動紀錄" empty="尚無資金異動">
-        {cashMovements.slice(0, 8).map((movement) => (
-          <Row key={movement.id} title={movementTypeLabel(movement.type)} subtitle={movement.occurred_at + " · 餘額 " + currency(movement.balance_after)} right={currency(movement.amount)} />
-        ))}
+      </section>
+      <ListSection title={`帳本 ${portfolios.length} 本`} empty="尚無帳本">
+        {portfolios.map((portfolio) => {
+          const movementCount = cashMovements.filter((movement) => movement.portfolio_id === portfolio.id).length;
+          return (
+            <article key={portfolio.id} className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate font-bold">{portfolio.name}</h3>
+                  <p className="mt-1 text-xs text-ink/50">{movementCount} 筆資金異動</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button className="rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onRename(portfolio)}>
+                    重新命名
+                  </button>
+                  <button className="rounded-md border border-coral/20 px-3 py-2 text-sm text-coral" onClick={() => onDelete(portfolio)}>
+                    刪除
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-md bg-paper p-3">
+                  <p className="text-xs text-ink/55">現金餘額</p>
+                  <p className="mt-1 font-bold">{currency(portfolio.cash_balance)}</p>
+                </div>
+                <div className="rounded-md bg-paper p-3">
+                  <p className="text-xs text-ink/55">累計投入</p>
+                  <p className="mt-1 font-bold">{currency(portfolio.total_deposits)}</p>
+                </div>
+                <div className="rounded-md bg-paper p-3">
+                  <p className="text-xs text-ink/55">累計轉出</p>
+                  <p className="mt-1 font-bold">{currency(portfolio.total_withdrawals)}</p>
+                </div>
+                <div className="rounded-md bg-paper p-3">
+                  <p className="text-xs text-ink/55">初始金額</p>
+                  <p className="mt-1 font-bold">{currency(portfolio.initial_amount)}</p>
+                </div>
+              </div>
+            </article>
+          );
+        })}
       </ListSection>
     </div>
   );
-}
-
-function movementTypeLabel(type: CashMovementType) {
-  if (type === "deposit") return "加入金額";
-  if (type === "withdraw") return "轉出金額";
-  return "金額修正";
 }

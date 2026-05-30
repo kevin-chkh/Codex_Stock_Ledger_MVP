@@ -153,9 +153,15 @@ export function Analytics({
     const grouped = new Map<string, { label: string; count: number }>();
     for (const trade of recentTrades) {
       const stock = stockMap.get(trade.stock_id);
-      const label = stock?.symbol && stock?.name ? `${stock.symbol} ${stock.name}` : trade.stock_id;
+      const tradeStockLabel =
+        trade.stock?.symbol && trade.stock?.name
+          ? `${trade.stock.symbol} ${trade.stock.name}`
+          : trade.stock?.name || trade.stock?.symbol || "";
+      const mappedStockLabel = stock?.symbol && stock?.name ? `${stock.symbol} ${stock.name}` : stock?.name || stock?.symbol || "";
+      const label = tradeStockLabel || mappedStockLabel || (isUuidLike(trade.stock_id) ? "未知標的" : trade.stock_id);
       const current = grouped.get(trade.stock_id) ?? { label, count: 0 };
       current.count += 1;
+      if (!current.label || current.label === "未知標的") current.label = label;
       grouped.set(trade.stock_id, current);
     }
     const mostTraded = [...grouped.values()].sort((a, b) => b.count - a.count)[0];
@@ -376,36 +382,52 @@ function ChartCard({
   data: { name: string; value: number; ratio: number }[];
   empty: string;
 }) {
+  const lead = data[0];
   return (
     <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-      <h2 className="font-bold">{title}</h2>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-bold">{title}</h2>
+          <p className="mt-1 text-xs text-ink/45">依目前範圍計算市值占比</p>
+        </div>
+        <div className="rounded-full bg-paper px-3 py-1 text-xs font-semibold tabular-nums text-ink/55">{data.length} 類</div>
+      </div>
       {data.length ? (
         <>
-          <div className="mt-3 h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={data} dataKey="value" nameKey="name" innerRadius={48} outerRadius={82} paddingAngle={2}>
-                  {data.map((entry, index) => (
-                    <Cell key={entry.name} fill={colors[index % colors.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value: number, _name, item) => {
-                    const ratio = typeof item?.payload?.ratio === "number" ? percent(item.payload.ratio) : "";
-                    return [`${currency(Number(value))} · ${ratio}`, "市值 / 占比"];
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="mt-4 rounded-xl bg-paper/55 px-4 py-5">
+            <div className="relative h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={data} dataKey="value" nameKey="name" innerRadius={56} outerRadius={92} paddingAngle={3} stroke="#f7f4ee" strokeWidth={3}>
+                    {data.map((entry, index) => (
+                      <Cell key={entry.name} fill={colors[index % colors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<DonutTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              {lead ? (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <div className="min-w-[7rem] rounded-full bg-white/95 px-4 py-3 text-center shadow-soft ring-1 ring-ink/5">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink/40">最大占比</p>
+                    <p className="mt-1 text-xl font-bold tabular-nums text-ink">{percent(lead.ratio)}</p>
+                    <p className="mt-1 truncate text-xs font-medium text-ink/55">{lead.name}</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
-          <div className="mt-2 space-y-2">
+          <div className="mt-3 space-y-2">
             {data.slice(0, 6).map((item, index) => (
-              <div className="flex items-center justify-between gap-3 rounded-md bg-paper/70 px-3 py-2.5 text-sm" key={item.name}>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-ink/5 bg-white px-3 py-3 text-sm shadow-[0_1px_0_rgba(10,10,10,0.02)]" key={item.name}>
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
-                  <span className="truncate font-medium">{item.name}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-semibold text-ink">{item.name}</span>
+                    <span className="mt-0.5 block text-xs tabular-nums text-ink/45">{currency(item.value)}</span>
+                  </span>
                 </span>
-                <span className="shrink-0 text-right font-semibold tabular-nums">{percent(item.ratio)}</span>
+                <span className="shrink-0 rounded-full bg-paper px-2.5 py-1 text-right text-[13px] font-semibold tabular-nums text-ink">{percent(item.ratio)}</span>
               </div>
             ))}
           </div>
@@ -414,6 +436,24 @@ function ChartCard({
         <p className="mt-3 text-sm text-ink/55">{empty}</p>
       )}
     </section>
+  );
+}
+
+function DonutTooltip({
+  active,
+  payload
+}: {
+  active?: boolean;
+  payload?: { payload?: { name?: string; value?: number; ratio?: number } }[];
+}) {
+  if (!active || !payload?.[0]?.payload) return null;
+  const item = payload[0].payload;
+  return (
+    <div className="rounded-lg bg-ink px-3 py-2 text-xs text-white shadow-soft">
+      <p className="font-semibold">{item.name}</p>
+      <p className="mt-1 tabular-nums text-white/90">{currency(Number(item.value || 0))}</p>
+      <p className="mt-1 tabular-nums text-white/70">占比 {percent(Number(item.ratio || 0))}</p>
+    </div>
   );
 }
 
@@ -436,4 +476,8 @@ function compactCurrency(value: number) {
 
 function isEtfPosition(position: Position) {
   return position.industry.toUpperCase().includes("ETF");
+}
+
+function isUuidLike(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

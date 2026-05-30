@@ -258,13 +258,27 @@ export function TradeForm({
   );
 }
 
-export function PortfolioForm({ draft, setDraft, onSubmit }: { draft: PortfolioDraft; setDraft: (value: PortfolioDraft | ((value: PortfolioDraft) => PortfolioDraft)) => void; onSubmit: () => void }) {
+export function PortfolioForm({
+  draft,
+  setDraft,
+  onSubmit,
+  submitLabel = "新增帳本",
+  showInitialAmount = true
+}: {
+  draft: PortfolioDraft;
+  setDraft: (value: PortfolioDraft | ((value: PortfolioDraft) => PortfolioDraft)) => void;
+  onSubmit: () => void;
+  submitLabel?: string;
+  showInitialAmount?: boolean;
+}) {
   return (
     <div className="space-y-3">
       <Field label="帳本名稱" value={draft.name} onChange={(name) => setDraft((value) => ({ ...value, name }))} placeholder="台股主帳本" />
-      <Field label="初始金額" type="number" value={draft.initialAmount} onChange={(initialAmount) => setDraft((value) => ({ ...value, initialAmount }))} />
+      {showInitialAmount ? (
+        <Field label="初始金額" type="number" value={draft.initialAmount} onChange={(initialAmount) => setDraft((value) => ({ ...value, initialAmount }))} />
+      ) : null}
       <Field label="備註" value={draft.note} onChange={(note) => setDraft((value) => ({ ...value, note }))} />
-      <SubmitButton onClick={onSubmit}>新增帳本</SubmitButton>
+      <SubmitButton onClick={onSubmit}>{submitLabel}</SubmitButton>
     </div>
   );
 }
