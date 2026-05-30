@@ -9,6 +9,7 @@ import {
   Home,
   Plus,
   ReceiptText,
+  RefreshCw,
   Settings,
   TrendingDown,
   TrendingUp,
