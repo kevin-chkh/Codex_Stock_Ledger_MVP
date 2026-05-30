@@ -1,5 +1,5 @@
-import { LayoutGrid, Rows3, Search, SlidersHorizontal } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, LayoutGrid, List, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Portfolio, Position } from "@/lib/types";
 import { ListSection, PortfolioScopePicker } from "./ui";
@@ -22,8 +22,9 @@ export function Holdings({
   const [tagFilter, setTagFilter] = useState("all");
   const [industryFilter, setIndustryFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"marketValue" | "returnRate" | "profit" | "symbol">("marketValue");
-  const [viewMode, setViewMode] = useState<"compact" | "detailed">("detailed");
-  const [expandedCount, setExpandedCount] = useState(5);
+  const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "expanded">("list");
+
   const feeSummary = useMemo(
     () => ({
       fee: openPositions.reduce((sum, position) => sum + position.paid_fee, 0),
@@ -31,15 +32,18 @@ export function Holdings({
     }),
     [openPositions]
   );
+
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
     openPositions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
     return [...tags].sort((a, b) => a.localeCompare(b, "zh-Hant"));
   }, [openPositions]);
+
   const availableIndustries = useMemo(
     () => [...new Set(openPositions.map((position) => position.industry).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-Hant")),
     [openPositions]
   );
+
   const filteredPositions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return [...openPositions]
@@ -58,13 +62,6 @@ export function Holdings({
       });
   }, [industryFilter, openPositions, query, sortBy, tagFilter]);
 
-  useEffect(() => {
-    setExpandedCount(5);
-  }, [query, tagFilter, industryFilter, sortBy, selectedPortfolioId, viewMode]);
-
-  const visiblePositions = useMemo(() => filteredPositions.slice(0, expandedCount), [filteredPositions, expandedCount]);
-  const hasMorePositions = filteredPositions.length > expandedCount;
-
   return (
     <div className="space-y-4">
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
@@ -73,27 +70,8 @@ export function Holdings({
             label="目前："
             value={selectedPortfolioId}
             onChange={onPortfolioChange}
-            options={[
-              ["all", "全部帳本"],
-              ...portfolios.map((portfolio) => [portfolio.id, portfolio.name])
-            ]}
+            options={portfolios.map((portfolio) => [portfolio.id, portfolio.name])}
           />
-          <div className="inline-flex rounded-md bg-paper p-1">
-            <button
-              className={"rounded px-2 py-2 " + (viewMode === "compact" ? "bg-white text-mint shadow-sm" : "text-ink/55")}
-              onClick={() => setViewMode("compact")}
-              aria-label="切換緊湊持股列表"
-            >
-              <Rows3 size={16} />
-            </button>
-            <button
-              className={"rounded px-2 py-2 " + (viewMode === "detailed" ? "bg-white text-mint shadow-sm" : "text-ink/55")}
-              onClick={() => setViewMode("detailed")}
-              aria-label="切換詳細持股卡片"
-            >
-              <LayoutGrid size={16} />
-            </button>
-          </div>
         </div>
         <label className="flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2">
           <Search size={18} className="shrink-0 text-ink/45" />
@@ -129,6 +107,7 @@ export function Holdings({
           </select>
         </div>
       </section>
+
       <section className="rounded-lg border border-ink/10 bg-white px-4 py-3 shadow-soft">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -147,121 +126,145 @@ export function Holdings({
           </div>
         </div>
       </section>
-      <ListSection title={"持股 " + filteredPositions.length + " 檔"} empty={openPositions.length ? "沒有符合條件的持股" : "尚無持股"}>
-        {visiblePositions.map((position) =>
-          viewMode === "compact" ? (
-            <article key={position.stock_id} className="rounded-lg border border-ink/10 bg-white px-3 py-3 shadow-soft">
-              <div className="flex items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="truncate font-semibold">{position.symbol + " " + position.name}</h3>
-                    <button className="shrink-0 rounded-md border border-ink/10 p-2 text-ink/70" onClick={() => onAdjustCost(position)} aria-label={"校正成本 " + position.symbol + " " + position.name}>
-                      <SlidersHorizontal size={16} />
-                    </button>
-                  </div>
-                  <p className="mt-1 truncate text-xs text-ink/50">
-                    {position.quantity + " 股" + (position.industry ? " · " + position.industry : "")}
-                  </p>
-                  <div className="mt-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-sm">
-                    <span className="text-ink/55">市值</span>
-                    <span className="font-semibold">{currency(position.market_value)}</span>
-                    <span className="text-ink/55">報酬率</span>
-                    <span className={"font-semibold " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</span>
-                    <span className="text-ink/55">未實現損益</span>
-                    <span className={"font-semibold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</span>
-                  </div>
-                </div>
-              </div>
-            </article>
-          ) : (
-            <article key={position.stock_id} className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-bold">{position.symbol + " " + position.name}</h3>
-                  <p className="mt-1 text-xs text-ink/50">
-                    {position.quantity + " 股" + (position.industry ? " · " + position.industry : "")}
-                  </p>
-                </div>
-                <button className="rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onAdjustCost(position)}>
-                  調整
-                </button>
-              </div>
-              <div className="mt-4 rounded-md bg-paper p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs text-ink/55">持有成本(含手續費)</p>
-                    <p className="mt-1 font-bold">{currency(position.holding_cost)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-ink/55">市值</p>
-                    <p className="mt-1 font-bold">{currency(position.market_value)}</p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-md bg-paper p-3">
-                  <p className="text-xs text-ink/55">每股均價</p>
-                  <p className="mt-1 font-bold">{decimal(position.average_cost, 1)}</p>
-                </div>
-                <div className="rounded-md bg-paper p-3">
-                  <p className="text-xs text-ink/55">報酬率</p>
-                  <p className={"mt-1 font-bold " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
-                </div>
-                <div className="col-span-2 rounded-md bg-paper p-3">
-                  <p className="text-xs text-ink/55">預估損益</p>
-                  <p className={"mt-1 font-bold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
-                </div>
-              </div>
-              {position.realized_profit !== 0 ? (
-                <p className={"mt-3 text-xs " + profitClass(position.realized_profit)}>{"已實現損益 " + currency(position.realized_profit)}</p>
-              ) : null}
-              {position.tags.length > 0 ? (
-                <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                  {position.tags.map((tag) => (
-                    <span key={tag} className="rounded-full bg-gold/15 px-2 py-1 text-ink/70">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </article>
-          )
-        )}
-        {filteredPositions.length > 5 ? (
-          <div className="rounded-xl border border-dashed border-ink/15 bg-paper/60 px-4 py-4">
-            <p className="text-sm font-medium text-ink">
-              {hasMorePositions ? `還有 ${filteredPositions.length - visiblePositions.length} 檔未展開` : `已展開全部 ${filteredPositions.length} 檔`}
-            </p>
-            <p className="mt-1 text-xs text-ink/55">目前顯示 {visiblePositions.length} / {filteredPositions.length} 檔</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {hasMorePositions ? (
-                <button
-                  className="rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white"
-                  onClick={() => setExpandedCount((current) => Math.min(current + 5, filteredPositions.length))}
-                >
-                  繼續展開 5 檔
-                </button>
-              ) : null}
-              {hasMorePositions ? (
-                <button
-                  className="rounded-lg border border-ink/10 bg-white px-4 py-3 text-sm"
-                  onClick={() => setExpandedCount(filteredPositions.length)}
-                >
-                  全部展開
-                </button>
-              ) : null}
-              {visiblePositions.length > 5 ? (
-                <button
-                  className="rounded-lg border border-ink/10 bg-white px-4 py-3 text-sm"
-                  onClick={() => setExpandedCount(5)}
-                >
-                  收合回前 5 檔
-                </button>
-              ) : null}
-            </div>
+
+      <ListSection
+        title={`持股 ${filteredPositions.length} 檔`}
+        empty={openPositions.length ? "沒有符合條件的持股" : "尚無持股"}
+        action={
+          <div className="inline-flex rounded-lg border border-ink/10 bg-paper p-1">
+            <button
+              className={"rounded-md p-2 " + (viewMode === "list" ? "bg-white text-mint shadow-sm" : "text-ink/55")}
+              onClick={() => setViewMode("list")}
+              aria-label="切換為清單模式"
+              title="清單模式"
+            >
+              <List size={16} />
+            </button>
+            <button
+              className={"rounded-md p-2 " + (viewMode === "expanded" ? "bg-white text-mint shadow-sm" : "text-ink/55")}
+              onClick={() => setViewMode("expanded")}
+              aria-label="切換為完整展開模式"
+              title="完整展開模式"
+            >
+              <LayoutGrid size={16} />
+            </button>
           </div>
-        ) : null}
+        }
+      >
+        {viewMode === "list" ? (
+          <div className="overflow-hidden rounded-xl border border-ink/10 bg-white">
+            {filteredPositions.map((position, index) => {
+              const expanded = expandedPositionId === position.stock_id;
+              return (
+                <article key={position.stock_id} className={index ? "border-t border-ink/8" : ""}>
+                  <div className="px-3 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <button className="min-w-0 flex-1 text-left" onClick={() => setExpandedPositionId(expanded ? null : position.stock_id)}>
+                        <div className="flex items-center gap-2">
+                          <p className="truncate font-semibold">
+                            {position.symbol} {position.name}
+                          </p>
+                          {expanded ? <ChevronUp size={16} className="shrink-0 text-ink/45" /> : <ChevronDown size={16} className="shrink-0 text-ink/45" />}
+                        </div>
+                        <p className="mt-1 truncate text-xs text-ink/50">
+                          {position.quantity} 股{position.industry ? ` · ${position.industry}` : ""}
+                        </p>
+                      </button>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-semibold">{currency(position.market_value)}</p>
+                        <p className={"mt-1 text-xs " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
+                      </div>
+                    </div>
+
+                    {expanded ? <ExpandedHoldingCard position={position} onAdjustCost={onAdjustCost} /> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredPositions.map((position) => (
+              <ExpandedHoldingCard key={position.stock_id} position={position} onAdjustCost={onAdjustCost} />
+            ))}
+          </div>
+        )}
       </ListSection>
     </div>
+  );
+}
+
+function ExpandedHoldingCard({
+  position,
+  onAdjustCost
+}: {
+  position: Position;
+  onAdjustCost: (position: Position) => void;
+}) {
+  return (
+    <article className="rounded-xl border border-ink/10 bg-[#fcfbf7] p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">
+            {position.symbol} {position.name}
+          </p>
+          <p className="mt-1 truncate text-xs text-ink/50">
+            {position.quantity} 股{position.industry ? ` · ${position.industry}` : ""}
+          </p>
+        </div>
+        <button
+          className="rounded-xl border border-ink/10 bg-white px-4 py-3 text-sm font-semibold text-ink/75"
+          onClick={() => onAdjustCost(position)}
+          aria-label={`調整 ${position.symbol} ${position.name} 成本`}
+        >
+          調整
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-lg bg-white px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] text-ink/45">持有成本(含手續費)</p>
+            <p className="mt-2 text-2xl font-bold">{currency(position.holding_cost)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] text-ink/45">市值</p>
+            <p className="mt-2 text-2xl font-bold">{currency(position.market_value)}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <div className="rounded-lg bg-white px-4 py-4">
+          <p className="text-[11px] text-ink/45">每股均價</p>
+          <p className="mt-2 text-lg font-semibold">{decimal(position.average_cost, 1)}</p>
+        </div>
+        <div className="rounded-lg bg-white px-4 py-4">
+          <p className="text-[11px] text-ink/45">報酬率</p>
+          <p className={"mt-2 text-lg font-semibold " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg bg-white px-4 py-4">
+        <p className="text-[11px] text-ink/45">預估損益</p>
+        <p className={"mt-2 text-2xl font-bold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
+      </div>
+
+      {position.realized_profit !== 0 ? (
+        <p className={"mt-3 text-sm " + profitClass(position.realized_profit)}>
+          已實現損益 {currency(position.realized_profit)}
+        </p>
+      ) : null}
+
+      {position.tags.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {position.tags.map((tag) => (
+            <span key={tag} className="rounded-full bg-gold/15 px-2 py-1 text-ink/70">
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </article>
   );
 }

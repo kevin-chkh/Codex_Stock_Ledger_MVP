@@ -25,6 +25,18 @@ type CashDraft = { portfolioId: string; type: CashMovementType; amount: string; 
 type StockDraft = { stockId: string; portfolioId: string; currentPrice: string; quantity: string; holdingCost: string; industry: string; tags: string };
 type StockAdjustBaseline = { quantity: number; holdingCost: number };
 
+function stripNumberFormatting(value: string) {
+  return value.replace(/,/g, "").trim();
+}
+
+function formatThousandsInput(value: string) {
+  const normalized = stripNumberFormatting(value);
+  if (!normalized) return "";
+  const [integerPart, decimalPart] = normalized.split(".");
+  const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return decimalPart !== undefined ? `${formattedInteger}.${decimalPart}` : formattedInteger;
+}
+
 function StockSuggestionMenu({ items, onPick }: { items: StockCatalogItem[]; onPick: (item: StockCatalogItem) => void }) {
   return (
     <div className="absolute left-0 right-0 top-[84px] z-20 overflow-hidden rounded-md border border-ink/15 bg-white shadow-soft">
@@ -122,7 +134,7 @@ export function TradeForm({
         ? resolveUnitPriceFromTotalAmount({
             type: draft.type,
             quantity: Number(draft.quantity || 0),
-            totalAmount: Number(draft.totalAmount || 0),
+            totalAmount: Number(stripNumberFormatting(draft.totalAmount || "0")),
             settings
           })
         : 0
@@ -205,9 +217,15 @@ export function TradeForm({
         <>
           <Field
             label={draft.type === "buy" ? "買入總成本(含手續費)" : "賣出金額"}
-            type="number"
-            value={draft.totalAmount}
-            onChange={(totalAmount) => setDraft((value) => ({ ...value, totalAmount }))}
+            type="text"
+            inputMode="decimal"
+            value={formatThousandsInput(draft.totalAmount)}
+            onChange={(totalAmount) =>
+              setDraft((value) => ({
+                ...value,
+                totalAmount: stripNumberFormatting(totalAmount).replace(/[^\d.]/g, "")
+              }))
+            }
           />
           <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
             <div className="flex justify-between">
@@ -339,7 +357,18 @@ export function StockAdjustForm({
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Field label="持有庫存" type="number" value={draft.quantity} onChange={(quantity) => setDraft((value) => ({ ...value, quantity }))} />
-        <Field label="持有成本(含手續費)" type="number" value={draft.holdingCost} onChange={(holdingCost) => setDraft((value) => ({ ...value, holdingCost }))} />
+        <Field
+          label="持有成本(含手續費)"
+          type="text"
+          inputMode="decimal"
+          value={formatThousandsInput(draft.holdingCost)}
+          onChange={(holdingCost) =>
+            setDraft((value) => ({
+              ...value,
+              holdingCost: stripNumberFormatting(holdingCost).replace(/[^\d.]/g, "")
+            }))
+          }
+        />
       </div>
       <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
         <div className="flex justify-between">

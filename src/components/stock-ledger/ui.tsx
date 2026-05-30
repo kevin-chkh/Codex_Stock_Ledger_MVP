@@ -51,11 +51,24 @@ export function SmallMetric({ label, value, className = "" }: { label: string; v
   );
 }
 
-export function ListSection({ title, empty, children }: { title: string; empty: string; children: ReactNode }) {
+export function ListSection({
+  title,
+  empty,
+  action,
+  children
+}: {
+  title: string;
+  empty: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   const hasItems = Array.isArray(children) ? children.length > 0 : Boolean(children);
   return (
     <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-      <h2 className="font-bold">{title}</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-bold">{title}</h2>
+        {action}
+      </div>
       <div className="mt-3 space-y-3">{hasItems ? children : <p className="text-sm text-ink/55">{empty}</p>}</div>
     </section>
   );
@@ -78,6 +91,7 @@ export function Field({
   value,
   onChange,
   type = "text",
+  inputMode,
   placeholder,
   trailing
 }: {
@@ -85,6 +99,7 @@ export function Field({
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   placeholder?: string;
   trailing?: ReactNode;
 }) {
@@ -95,6 +110,7 @@ export function Field({
         <input
           className={"w-full rounded-md border border-ink/15 py-3 outline-none focus:border-mint " + (trailing ? "pl-3 pr-11" : "px-3")}
           type={type}
+          inputMode={inputMode}
           value={value}
           placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
