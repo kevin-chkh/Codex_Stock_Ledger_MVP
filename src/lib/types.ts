@@ -46,6 +46,17 @@ export type StockTag = {
   name: string;
 };
 
+export type PositionAdjustment = {
+  id: string;
+  user_id: string;
+  portfolio_id: string;
+  stock_id: string;
+  adjusted_quantity: number;
+  adjusted_cost: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Trade = {
   id: string;
   user_id: string;
@@ -80,8 +91,11 @@ export type Position = {
   industry: string;
   tags: string[];
   quantity: number;
+  holding_cost: number;
   average_cost: number;
   remaining_cost: number;
+  paid_fee: number;
+  paid_tax: number;
   realized_profit: number;
   current_price: number;
   price_updated_at: string | null;
@@ -94,6 +108,7 @@ export type Position = {
 
 export type DashboardMetrics = {
   cash: number;
+  holdingCost: number;
   holdingsValue: number;
   totalAssets: number;
   realizedProfit: number;

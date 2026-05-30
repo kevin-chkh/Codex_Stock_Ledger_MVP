@@ -18,13 +18,13 @@ import {
   X
 } from "lucide-react";
 import { z } from "zod";
-import { calculateDashboardMetrics, calculateTradeAmounts, DEFAULT_SETTINGS, buildPositions } from "@/lib/calculations";
+import { calculateDashboardMetrics, calculateTradeAmounts, DEFAULT_SETTINGS, buildPositions, resolveUnitPriceFromTotalAmount } from "@/lib/calculations";
 import { parseCsv } from "@/lib/csv";
 import { currency, parseTags, profitClass } from "@/lib/format";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
 import { loadStockCatalog, type StockCatalogItem } from "@/lib/stock-lookup";
 import { buildPortfolioUpdates, deleteTradeFromPortfolios, hasOversoldPosition, makeTrade, tradeCashImpact } from "@/lib/trade-ledger";
-import type { CashMovement, CashMovementType, Portfolio, Position, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
+import type { CashMovement, CashMovementType, Portfolio, Position, PositionAdjustment, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
 import { Dashboard } from "@/components/stock-ledger/dashboard";
 import { ListSection, Row } from "@/components/stock-ledger/ui";
 import { Trades } from "@/components/stock-ledger/trades";
@@ -38,16 +38,18 @@ type SheetMode = "actions" | "trade" | "cash" | "portfolio" | "stock" | "setting
 type TradeDraft = {
   portfolioId: string;
   type: TradeType;
+  buyMode: "unitPrice" | "totalAmount";
   symbol: string;
   name: string;
   quantity: string;
   unitPrice: string;
+  totalAmount: string;
   industry: string;
   tags: string;
 };
 type PortfolioDraft = { name: string; initialAmount: string; note: string };
 type CashDraft = { portfolioId: string; type: CashMovementType; amount: string; note: string };
-type StockDraft = { stockId: string; currentPrice: string; industry: string; tags: string };
+type StockDraft = { stockId: string; portfolioId: string; currentPrice: string; quantity: string; holdingCost: string; industry: string; tags: string };
 type LocalSnapshot = {
   version: 1;
   portfolios: Portfolio[];
@@ -55,6 +57,7 @@ type LocalSnapshot = {
   stocks: Stock[];
   stockTags: StockTag[];
   trades: Trade[];
+  positionAdjustments: PositionAdjustment[];
   settings: UserSettings;
 };
 
@@ -63,15 +66,23 @@ type QuotePayload = {
   failedSymbols: string[];
 };
 
+type CsvImportSummary = {
+  totalRows: number;
+  importedCount: number;
+  skipped: { line: number; reason: string; raw: string[] }[];
+};
+
 const LOCAL_STORAGE_KEY = "stock-ledger-local-v1";
 
 const tradeSchema = z.object({
   portfolioId: z.string().min(1, "請選擇帳本"),
   type: z.enum(["buy", "sell"]),
+  buyMode: z.enum(["unitPrice", "totalAmount"]).default("unitPrice"),
   symbol: z.string().min(1, "請輸入股票代號").max(20),
   name: z.string().min(1, "請輸入股票名稱").max(80),
   quantity: z.coerce.number().positive("股數需大於 0"),
   unitPrice: z.coerce.number().positive("成交單價(股)需大於 0"),
+  totalAmount: z.string().optional(),
   industry: z.string().optional(),
   tags: z.string().optional()
 });
@@ -91,7 +102,10 @@ const cashSchema = z.object({
 
 const stockSchema = z.object({
   stockId: z.string().min(1),
+  portfolioId: z.string().min(1),
   currentPrice: z.coerce.number().min(0, "價格不可小於 0"),
+  quantity: z.coerce.number().min(0, "持有庫存不可小於 0"),
+  holdingCost: z.coerce.number().min(0, "持有成本不可小於 0"),
   industry: z.string().optional(),
   tags: z.string().optional()
 });
@@ -135,10 +149,12 @@ function toUserError(error: unknown, fallback: string) {
 const emptyTradeDraft: TradeDraft = {
   portfolioId: "",
   type: "buy",
+  buyMode: "unitPrice",
   symbol: "",
   name: "",
   quantity: "",
   unitPrice: "",
+  totalAmount: "",
   industry: "",
   tags: ""
 };
@@ -155,6 +171,7 @@ export default function StockLedgerApp() {
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [stockTags, setStockTags] = useState<StockTag[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [positionAdjustments, setPositionAdjustments] = useState<PositionAdjustment[]>([]);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [stockCatalog, setStockCatalog] = useState<StockCatalogItem[]>([]);
   const [catalogSource, setCatalogSource] = useState<"api" | "cache" | "fallback">("fallback");
@@ -166,9 +183,10 @@ export default function StockLedgerApp() {
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(emptyTradeDraft);
   const [portfolioDraft, setPortfolioDraft] = useState({ name: "", initialAmount: "", note: "" });
   const [cashDraft, setCashDraft] = useState({ portfolioId: "", type: "deposit" as CashMovementType, amount: "", note: "" });
-  const [stockDraft, setStockDraft] = useState({ stockId: "", currentPrice: "", industry: "", tags: "" });
+  const [stockDraft, setStockDraft] = useState({ stockId: "", portfolioId: "", currentPrice: "", quantity: "", holdingCost: "", industry: "", tags: "" });
+  const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
 
-  const positions = useMemo(() => buildPositions(trades, stocks, stockTags), [trades, stocks, stockTags]);
+  const positions = useMemo(() => buildPositions(trades, stocks, stockTags, positionAdjustments), [trades, stocks, stockTags, positionAdjustments]);
   const catalogBySymbol = useMemo(() => new Map(stockCatalog.map((item) => [item.symbol, item])), [stockCatalog]);
   const stockSignature = useMemo(() => stocks.map((stock) => stock.id).sort().join("|"), [stocks]);
   const latestQuoteAt = useMemo(() => {
@@ -203,9 +221,10 @@ export default function StockLedgerApp() {
       stocks,
       stockTags,
       trades,
+      positionAdjustments,
       settings
     });
-  }, [cashMovements, loading, portfolios, settings, stockTags, stocks, trades, userId]);
+  }, [cashMovements, loading, portfolios, positionAdjustments, settings, stockTags, stocks, trades, userId]);
 
   useEffect(() => {
     if (!userId || !stockSignature) return;
@@ -267,6 +286,8 @@ export default function StockLedgerApp() {
       const result = await loadStockCatalog();
       setStockCatalog(result.catalog);
       setCatalogSource(result.source);
+      const normalizedNameBySymbol = new Map(result.catalog.map((item) => [item.symbol, item.name]));
+      setStocks((current) => current.map((stock) => (normalizedNameBySymbol.has(stock.symbol) ? { ...stock, name: normalizedNameBySymbol.get(stock.symbol) ?? stock.name } : stock)));
       if (showResultMessage) {
         const sourceLabel = result.source === "api" ? "API" : result.source === "cache" ? "本地快取" : "fallback";
         setMessage("股票目錄已更新，來源：" + sourceLabel + "，共 " + result.catalog.length + " 檔。");
@@ -367,6 +388,7 @@ export default function StockLedgerApp() {
     setStocks(snapshot.stocks.map(normalizeStock));
     setStockTags(snapshot.stockTags);
     setTrades(snapshot.trades.map(normalizeTrade));
+    setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
     setMessage("已載入本機儲存資料。");
     return true;
   }
@@ -381,6 +403,7 @@ export default function StockLedgerApp() {
     setUserId(demoUser);
     setSettings({ ...DEFAULT_SETTINGS, user_id: demoUser });
     setCashMovements([]);
+    setPositionAdjustments([]);
     setPortfolios([
       {
         id: portfolioId,
@@ -388,7 +411,7 @@ export default function StockLedgerApp() {
         name: "台股主帳本",
         currency: "TWD",
         initial_amount: 300000,
-        cash_balance: 135544,
+        cash_balance: 138970.86,
         total_deposits: 300000,
         total_withdrawals: 0,
         note: "Demo data",
@@ -434,13 +457,14 @@ export default function StockLedgerApp() {
 
   async function loadCloudData(uidValue: string) {
     if (!supabase) return;
-    const [portfolioResult, stockResult, tagResult, tradeResult, cashResult, settingsResult] = await Promise.all([
+    const [portfolioResult, stockResult, tagResult, tradeResult, cashResult, settingsResult, adjustmentsResult] = await Promise.all([
       supabase.from("portfolios").select("*").order("created_at", { ascending: true }),
       supabase.from("stocks").select("*").order("symbol", { ascending: true }),
       supabase.from("stock_tags").select("*").order("name", { ascending: true }),
       supabase.from("trades").select("*, stock:stocks(*)").order("traded_at", { ascending: false }),
       supabase.from("cash_movements").select("*").order("occurred_at", { ascending: false }),
-      supabase.from("settings").select("*").eq("user_id", uidValue).maybeSingle()
+      supabase.from("settings").select("*").eq("user_id", uidValue).maybeSingle(),
+      supabase.from("position_adjustments").select("*").order("updated_at", { ascending: false })
     ]);
 
     setPortfolios((portfolioResult.data ?? []).map(normalizePortfolio));
@@ -448,6 +472,7 @@ export default function StockLedgerApp() {
     setStockTags((tagResult.data ?? []) as StockTag[]);
     setTrades((tradeResult.data ?? []).map(normalizeTrade));
     setCashMovements((cashResult.data ?? []).map(normalizeCashMovement));
+    setPositionAdjustments(adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []).map(normalizePositionAdjustment));
     setSettings(settingsResult.data ? normalizeSettings(settingsResult.data) : { ...DEFAULT_SETTINGS, user_id: uidValue });
   }
 
@@ -549,19 +574,38 @@ export default function StockLedgerApp() {
 
   async function saveTrade() {
     setFormError("");
-    const parsed = tradeSchema.safeParse({ ...tradeDraft, portfolioId: tradeDraft.portfolioId || portfolios[0]?.id || "" });
+    const derivedUnitPrice =
+      tradeDraft.buyMode === "totalAmount"
+        ? Number(tradeDraft.quantity || 0) > 0
+          ? resolveUnitPriceFromTotalAmount({
+              type: tradeDraft.type,
+              quantity: Number(tradeDraft.quantity || 0),
+              totalAmount: Number(tradeDraft.totalAmount || 0),
+              settings
+            })
+          : 0
+        : Number(tradeDraft.unitPrice || 0);
+    const parsed = tradeSchema.safeParse({
+      ...tradeDraft,
+      portfolioId: tradeDraft.portfolioId || portfolios[0]?.id || "",
+      unitPrice: derivedUnitPrice
+    });
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
+    if (tradeDraft.buyMode === "totalAmount" && Number(tradeDraft.totalAmount || 0) <= 0) {
+      return setFormError((tradeDraft.type === "buy" ? "買入" : "賣出") + "金額需大於 0");
+    }
     const portfolio = portfolios.find((item) => item.id === parsed.data.portfolioId);
     if (!portfolio) return setFormError("找不到帳本");
     const editingTrade = editingTradeId ? (trades.find((trade) => trade.id === editingTradeId) ?? null) : null;
 
     const catalogStock = catalogBySymbol.get(parsed.data.symbol);
+    const displayName = catalogStock?.name || parsed.data.name;
     const existingStock = stocks.find((item) => item.symbol === parsed.data.symbol);
     const stock: Stock =
       existingStock
         ? {
             ...existingStock,
-            name: parsed.data.name,
+            name: displayName,
             market: catalogStock?.market || existingStock.market,
             industry: parsed.data.industry || existingStock.industry,
             updated_at: new Date().toISOString()
@@ -571,7 +615,7 @@ export default function StockLedgerApp() {
         id: uid(),
         user_id: userId ?? "demo",
         symbol: parsed.data.symbol,
-        name: parsed.data.name,
+        name: displayName,
         market: catalogStock?.market || "TWSE",
         industry: parsed.data.industry || null,
         current_price: parsed.data.unitPrice,
@@ -589,7 +633,7 @@ export default function StockLedgerApp() {
 
     if (parsed.data.type === "sell") {
       const tradesForValidation = editingTradeId ? trades.filter((trade) => trade.id !== editingTradeId) : trades;
-      const validationPositions = buildPositions(tradesForValidation, existingStock ? stocks : [...stocks, stock], stockTags);
+      const validationPositions = buildPositions(tradesForValidation, existingStock ? stocks : [...stocks, stock], stockTags, positionAdjustments);
       const position = validationPositions.find((item) => item.stock_id === stock.id && item.portfolio_id === portfolio.id);
       if (!position || parsed.data.quantity > position.quantity) return setFormError("可賣股數不足，目前可賣 " + (position?.quantity ?? 0));
     }
@@ -616,9 +660,17 @@ export default function StockLedgerApp() {
       ? { ...tradeBase, id: editingTrade.id, traded_at: editingTrade.traded_at, created_at: editingTrade.created_at }
       : tradeBase;
     const nextTrades = editingTrade ? trades.map((item) => (item.id === trade.id ? trade : item)) : [trade, ...trades];
+    const hasPositionAdjustment = positionAdjustments.some((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id);
     const shouldValidateOversold =
-      parsed.data.type === "sell" ||
-      Boolean(editingTrade && (editingTrade.type === "sell" || editingTrade.quantity > parsed.data.quantity || editingTrade.stock_id !== stock.id || editingTrade.portfolio_id !== portfolio.id));
+      !hasPositionAdjustment &&
+      (parsed.data.type === "sell" ||
+        Boolean(
+          editingTrade &&
+            (editingTrade.type === "sell" ||
+              editingTrade.quantity > parsed.data.quantity ||
+              editingTrade.stock_id !== stock.id ||
+              editingTrade.portfolio_id !== portfolio.id)
+        ));
     if (shouldValidateOversold && hasOversoldPosition(nextTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
       return setFormError("此修改會造成某檔股票賣出股數超過持有股數，請先調整相關交易。");
     }
@@ -719,10 +771,12 @@ export default function StockLedgerApp() {
     setTradeDraft({
       portfolioId: trade.portfolio_id,
       type: trade.type,
+      buyMode: "unitPrice",
       symbol: stock?.symbol ?? "",
       name: stock?.name ?? "",
       quantity: String(trade.quantity),
       unitPrice: String(trade.unit_price),
+      totalAmount: String(trade.type === "buy" ? trade.net_amount : trade.gross_amount),
       industry: stock?.industry ?? "",
       tags: stockTags
         .filter((tag) => tag.stock_id === trade.stock_id)
@@ -744,12 +798,23 @@ export default function StockLedgerApp() {
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
     const stock = stocks.find((item) => item.id === parsed.data.stockId);
     if (!stock) return setFormError("找不到股票");
+    if (parsed.data.quantity === 0 && parsed.data.holdingCost > 0) return setFormError("持有庫存為 0 時，持有成本也必須為 0。");
 
     const nextStock = {
       ...stock,
       current_price: parsed.data.currentPrice,
       industry: parsed.data.industry || null,
       price_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    const nextAdjustment: PositionAdjustment = {
+      id: positionAdjustments.find((item) => item.portfolio_id === parsed.data.portfolioId && item.stock_id === stock.id)?.id ?? uid(),
+      user_id: userId ?? "demo",
+      portfolio_id: parsed.data.portfolioId,
+      stock_id: stock.id,
+      adjusted_quantity: parsed.data.quantity,
+      adjusted_cost: parsed.data.holdingCost,
+      created_at: positionAdjustments.find((item) => item.portfolio_id === parsed.data.portfolioId && item.stock_id === stock.id)?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
     const nextTags = (parsed.data.tags ?? "")
@@ -761,6 +826,22 @@ export default function StockLedgerApp() {
     if (supabase && hasSupabaseEnv) {
       const { error: stockError } = await supabase.from("stocks").update(nextStock).eq("id", stock.id);
       if (stockError) return setFormError(toUserError(stockError, "更新股票失敗。"));
+      const adjustmentQuery = supabase.from("position_adjustments");
+      if (parsed.data.quantity === 0 && parsed.data.holdingCost === 0) {
+        const { error: adjustmentError } = await adjustmentQuery.delete().eq("portfolio_id", parsed.data.portfolioId).eq("stock_id", stock.id);
+        if (adjustmentError && !String(adjustmentError.message).includes("position_adjustments")) {
+          return setFormError(toUserError(adjustmentError, "更新持股調整失敗。"));
+        }
+      } else {
+        const { error: adjustmentError } = await adjustmentQuery.upsert(nextAdjustment);
+        if (adjustmentError) {
+          return setFormError(
+            String(adjustmentError.message).includes("position_adjustments")
+              ? "尚未建立持股調整資料表，請先執行最新 schema.sql。"
+              : toUserError(adjustmentError, "更新持股調整失敗。")
+          );
+        }
+      }
       await supabase.from("stock_tags").delete().eq("stock_id", stock.id);
       if (nextTags.length) {
         const { error: tagError } = await supabase.from("stock_tags").insert(nextTags);
@@ -769,8 +850,12 @@ export default function StockLedgerApp() {
     }
 
     setStocks((current) => current.map((item) => (item.id === stock.id ? nextStock : item)));
+    setPositionAdjustments((current) => {
+      const filtered = current.filter((item) => !(item.portfolio_id === parsed.data.portfolioId && item.stock_id === stock.id));
+      return parsed.data.quantity === 0 && parsed.data.holdingCost === 0 ? filtered : [...filtered, nextAdjustment];
+    });
     setStockTags((current) => [...current.filter((item) => item.stock_id !== stock.id), ...nextTags]);
-    setMessage("股票資訊已更新。");
+    setMessage("持股資訊已更新。");
     setSheetMode(null);
   }
 
@@ -793,6 +878,7 @@ export default function StockLedgerApp() {
       stocks,
       stockTags,
       trades,
+      positionAdjustments,
       settings
     };
   }
@@ -830,6 +916,7 @@ export default function StockLedgerApp() {
       setStocks(snapshot.stocks.map(normalizeStock));
       setStockTags(snapshot.stockTags);
       setTrades(snapshot.trades.map(normalizeTrade));
+      setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
       setDashboardPortfolioId("all");
       setMessage("備份已匯入。");
       setSheetMode(null);
@@ -841,6 +928,7 @@ export default function StockLedgerApp() {
 
   async function importTradesCsv(file: File) {
     setFormError("");
+    setCsvImportSummary(null);
     try {
       const text = await file.text();
       const rows = parseCsv(text);
@@ -852,27 +940,38 @@ export default function StockLedgerApp() {
       if (missing.length) return setFormError("CSV 欄位缺少：" + missing.join("、"));
 
       const headerIndex = new Map(header.map((name, index) => [name, index]));
-      const parsedRows = rows.slice(1).filter((row) => row.some((cell) => cell.trim())).map((row) => ({
-        tradedAt: row[headerIndex.get("日期") ?? -1] || today(),
-        portfolioName: row[headerIndex.get("帳本") ?? -1] || "",
-        type: row[headerIndex.get("買賣") ?? -1] || "",
-        symbol: (row[headerIndex.get("股票代號") ?? -1] || "").trim(),
-        name: (row[headerIndex.get("股票名稱") ?? -1] || "").trim(),
-        quantity: Number((row[headerIndex.get("股數") ?? -1] || "").replace(/,/g, "")),
-        unitPrice: Number((row[headerIndex.get("成交單價") ?? -1] || "").replace(/,/g, "")),
-        industry: (row[headerIndex.get("產業別") ?? -1] || "").trim()
-      }));
+      const parsedRows = rows
+        .slice(1)
+        .map((row, index) => ({ row, line: index + 2 }))
+        .filter(({ row }) => row.some((cell) => cell.trim()))
+        .map(({ row, line }) => ({
+          line,
+          raw: row,
+          tradedAt: row[headerIndex.get("日期") ?? -1] || today(),
+          portfolioName: row[headerIndex.get("帳本") ?? -1] || "",
+          type: row[headerIndex.get("買賣") ?? -1] || "",
+          symbol: (row[headerIndex.get("股票代號") ?? -1] || "").trim(),
+          name: (row[headerIndex.get("股票名稱") ?? -1] || "").trim(),
+          quantity: Number((row[headerIndex.get("股數") ?? -1] || "").replace(/,/g, "")),
+          unitPrice: Number((row[headerIndex.get("成交單價") ?? -1] || "").replace(/,/g, "")),
+          industry: (row[headerIndex.get("產業別") ?? -1] || "").trim()
+        }));
 
       let nextPortfolios = [...portfolios];
       let nextStocks = [...stocks];
       let nextTrades = [...trades];
+      const skipped: CsvImportSummary["skipped"] = [];
 
       for (const row of parsedRows) {
         if (!row.portfolioName || !row.symbol || !row.name || !Number.isFinite(row.quantity) || !Number.isFinite(row.unitPrice) || row.quantity <= 0 || row.unitPrice <= 0) {
+          skipped.push({ line: row.line, reason: "欄位缺漏或數值格式錯誤", raw: row.raw });
           continue;
         }
         const portfolio = nextPortfolios.find((item) => item.name === row.portfolioName);
-        if (!portfolio) continue;
+        if (!portfolio) {
+          skipped.push({ line: row.line, reason: "找不到對應帳本名稱", raw: row.raw });
+          continue;
+        }
         const tradeType: TradeType = row.type.includes("賣") ? "sell" : "buy";
 
         let stock = nextStocks.find((item) => item.symbol === row.symbol);
@@ -908,10 +1007,16 @@ export default function StockLedgerApp() {
         });
 
         const candidateTrades = [trade, ...nextTrades];
-        if (hasOversoldPosition(candidateTrades, { portfolioId: portfolio.id, stockId: stock.id })) continue;
+        if (hasOversoldPosition(candidateTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
+          skipped.push({ line: row.line, reason: "賣出股數超過可持有數量", raw: row.raw });
+          continue;
+        }
         if (tradeType === "buy" && !settings.allow_negative_cash) {
           const currentPortfolio = nextPortfolios.find((item) => item.id === portfolio.id);
-          if (!currentPortfolio || currentPortfolio.cash_balance < trade.net_amount) continue;
+          if (!currentPortfolio || currentPortfolio.cash_balance < trade.net_amount) {
+            skipped.push({ line: row.line, reason: "帳本現金不足，買入交易未匯入", raw: row.raw });
+            continue;
+          }
         }
 
         nextTrades = candidateTrades;
@@ -935,7 +1040,13 @@ export default function StockLedgerApp() {
       setStocks(nextStocks);
       setTrades(nextTrades);
       setPortfolios(nextPortfolios);
-      setMessage("CSV 匯入完成，新增交易 " + (nextTrades.length - trades.length) + " 筆。");
+      const importedCount = nextTrades.length - trades.length;
+      setCsvImportSummary({
+        totalRows: parsedRows.length,
+        importedCount,
+        skipped
+      });
+      setMessage("CSV 匯入完成，成功 " + importedCount + " 筆，跳過 " + skipped.length + " 筆。");
     } catch (error) {
       console.error("Failed to import CSV", error);
       setFormError("CSV 解析失敗，請確認格式與欄位。");
@@ -1046,14 +1157,28 @@ export default function StockLedgerApp() {
         {activeTab === "portfolios" && (
           <Portfolios portfolios={portfolios} cashMovements={cashMovements} onNew={() => setSheetMode("portfolio")} onCash={() => setSheetMode("cash")} />
         )}
-        {activeTab === "trades" && <Trades trades={trades} stocks={stocks} portfolios={portfolios} onEdit={openEditTrade} onDelete={deleteTrade} onImportCsv={importTradesCsv} />}
+        {activeTab === "trades" && (
+          <Trades
+            trades={trades}
+            stocks={stocks}
+            portfolios={portfolios}
+            importSummary={csvImportSummary}
+            onEdit={openEditTrade}
+            onDelete={deleteTrade}
+            onImportCsv={importTradesCsv}
+          />
+        )}
         {activeTab === "holdings" && (
           <Holdings
             positions={positions}
             onEdit={(position) => {
+              const adjustment = positionAdjustments.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
               setStockDraft({
                 stockId: position.stock_id,
+                portfolioId: position.portfolio_id,
                 currentPrice: String(position.current_price),
+                quantity: String(adjustment?.adjusted_quantity ?? position.quantity),
+                holdingCost: String(adjustment?.adjusted_cost ?? position.holding_cost),
                 industry: position.industry === "未分類" ? "" : position.industry,
                 tags: position.tags.join(", ")
               });
@@ -1061,7 +1186,7 @@ export default function StockLedgerApp() {
             }}
           />
         )}
-        {activeTab === "analytics" && <Analytics positions={positions} />}
+        {activeTab === "analytics" && <Analytics positions={positions} trades={trades} />}
       </section>
 
       <button
@@ -1164,6 +1289,14 @@ function normalizeCashMovement(row: Record<string, unknown>): CashMovement {
   return { ...(row as CashMovement), amount: numberValue(row.amount), balance_after: numberValue(row.balance_after) };
 }
 
+function normalizePositionAdjustment(row: Record<string, unknown>): PositionAdjustment {
+  return {
+    ...(row as PositionAdjustment),
+    adjusted_quantity: numberValue(row.adjusted_quantity),
+    adjusted_cost: numberValue(row.adjusted_cost)
+  };
+}
+
 function normalizeSettings(row: Record<string, unknown>): UserSettings {
   return {
     user_id: String(row.user_id),
@@ -1231,6 +1364,7 @@ function normalizeLocalSnapshot(parsed: Partial<LocalSnapshot>): LocalSnapshot |
     stocks: parsed.stocks ?? [],
     stockTags: parsed.stockTags ?? [],
     trades: parsed.trades ?? [],
+    positionAdjustments: Array.isArray(parsed.positionAdjustments) ? parsed.positionAdjustments.map((row) => normalizePositionAdjustment(row as Record<string, unknown>)) : [],
     settings: parsed.settings ?? DEFAULT_SETTINGS
   };
 }

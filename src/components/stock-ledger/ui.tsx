@@ -12,8 +12,8 @@ export function Metric({ label, value, strong, className = "" }: { label: string
 export function SmallCard({ label, value, valueClass = "" }: { label: string; value: string; valueClass?: string }) {
   return (
     <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-      <p className="text-xs text-ink/55">{label}</p>
-      <p className={"mt-2 text-lg font-bold " + valueClass}>{value}</p>
+      <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink/45">{label}</p>
+      <p className={"mt-2 text-lg font-bold leading-tight " + valueClass}>{value}</p>
     </section>
   );
 }

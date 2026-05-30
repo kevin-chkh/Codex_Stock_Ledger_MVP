@@ -6,6 +6,13 @@ export function currency(value: number) {
   }).format(value || 0);
 }
 
+export function decimal(value: number, fractionDigits = 1) {
+  return new Intl.NumberFormat("zh-TW", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits
+  }).format(value || 0);
+}
+
 export function percent(value: number) {
   return ((value || 0) * 100).toFixed(2) + "%";
 }
