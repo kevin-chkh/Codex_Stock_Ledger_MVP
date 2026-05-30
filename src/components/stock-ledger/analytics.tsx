@@ -2,15 +2,31 @@ import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { currency, percent, profitClass } from "@/lib/format";
 import { groupByValue, roundMoney } from "@/lib/calculations";
-import type { Position, Trade } from "@/lib/types";
-import { ListSection, SmallCard } from "./ui";
+import type { Portfolio, Position, Stock, Trade } from "@/lib/types";
+import { ListSection, PortfolioScopePicker, SmallCard } from "./ui";
 
 const colors = ["#2f7d68", "#c6973f", "#c75b4d", "#4f6f9f", "#7c6a9d", "#61705f"];
 
 type TrendWindow = "14d" | "30d";
 type ProfitMode = "realized" | "unrealized";
 
-export function Analytics({ positions, trades }: { positions: Position[]; trades: Trade[] }) {
+export function Analytics({
+  positions,
+  trades,
+  stocks,
+  portfolios,
+  selectedPortfolioId,
+  onPortfolioChange,
+  cash
+}: {
+  positions: Position[];
+  trades: Trade[];
+  stocks: Stock[];
+  portfolios: Portfolio[];
+  selectedPortfolioId: string;
+  onPortfolioChange: (portfolioId: string) => void;
+  cash: number;
+}) {
   const [tagFilter, setTagFilter] = useState("all");
   const [trendWindow, setTrendWindow] = useState<TrendWindow>("14d");
   const [profitMode, setProfitMode] = useState<ProfitMode>("unrealized");
@@ -128,6 +144,7 @@ export function Analytics({ positions, trades }: { positions: Position[]; trades
   }, [latestTradeDate, trades, trendWindow]);
 
   const tradeBehavior = useMemo(() => {
+    const stockMap = new Map(stocks.map((stock) => [stock.id, stock]));
     const buyTrades = recentTrades.filter((trade) => trade.type === "buy");
     const sellTrades = recentTrades.filter((trade) => trade.type === "sell");
     const avgBuyAmount = buyTrades.length
@@ -135,10 +152,8 @@ export function Analytics({ positions, trades }: { positions: Position[]; trades
       : 0;
     const grouped = new Map<string, { label: string; count: number }>();
     for (const trade of recentTrades) {
-      const label =
-        trade.stock?.symbol && trade.stock?.name
-          ? `${trade.stock.symbol} ${trade.stock.name}`
-          : trade.stock_id;
+      const stock = stockMap.get(trade.stock_id);
+      const label = stock?.symbol && stock?.name ? `${stock.symbol} ${stock.name}` : trade.stock_id;
       const current = grouped.get(trade.stock_id) ?? { label, count: 0 };
       current.count += 1;
       grouped.set(trade.stock_id, current);
@@ -151,7 +166,7 @@ export function Analytics({ positions, trades }: { positions: Position[]; trades
       mostTradedLabel: mostTraded?.label ?? "尚無資料",
       mostTradedCount: mostTraded?.count ?? 0
     };
-  }, [recentTrades]);
+  }, [recentTrades, stocks]);
 
   const profitRows = useMemo(() => {
     const grouped = new Map<
@@ -191,6 +206,17 @@ export function Analytics({ positions, trades }: { positions: Position[]; trades
   return (
     <div className="space-y-4">
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+        <div className="mb-3">
+          <PortfolioScopePicker
+            label="目前："
+            value={selectedPortfolioId}
+            onChange={onPortfolioChange}
+            options={[
+              ["all", "全部帳本"],
+              ...portfolios.map((portfolio) => [portfolio.id, portfolio.name])
+            ]}
+          />
+        </div>
         <label className="block">
           <span className="text-sm font-semibold">依分類標籤篩選</span>
           <select className="mt-2 w-full rounded-md border border-ink/15 bg-white px-3 py-3 outline-none focus:border-mint" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}>
@@ -205,7 +231,11 @@ export function Analytics({ positions, trades }: { positions: Position[]; trades
       </section>
 
       <section className="grid grid-cols-3 gap-3">
-        <SmallCard label="最大單一持股" value={percent(topPositionRatio)} hint={sortedPositions[0]?.symbol ?? "尚無資料"} />
+        <SmallCard
+          label="最大單一持股"
+          value={percent(topPositionRatio)}
+          hint={sortedPositions[0] ? `${sortedPositions[0].symbol} ${sortedPositions[0].name}` : "尚無資料"}
+        />
         <SmallCard label="前 3 大持股" value={percent(topThreeRatio)} hint="占總持股市值比例" />
         <SmallCard label="最大產業占比" value={percent(topIndustryRatio)} hint={industryData[0]?.name ?? "尚無資料"} />
       </section>
@@ -213,6 +243,17 @@ export function Analytics({ positions, trades }: { positions: Position[]; trades
       <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" />
       <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" />
       <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" />
+      <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+        <div>
+          <h2 className="font-bold">資產組成</h2>
+          <p className="mt-1 text-xs text-ink/50">目前先顯示當前組成，歷史總資產趨勢即將推出。</p>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <MetricTile label="現金" value={currency(cash)} />
+          <MetricTile label="持股市值" value={currency(holdingsValue)} />
+          <MetricTile label="總持股檔數" value={`${filteredPositions.length} 檔`} />
+        </div>
+      </section>
 
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
         <div>
@@ -359,12 +400,12 @@ function ChartCard({
           </div>
           <div className="mt-2 space-y-2">
             {data.slice(0, 6).map((item, index) => (
-              <div className="flex items-center justify-between text-sm" key={item.name}>
+              <div className="flex items-center justify-between gap-3 rounded-md bg-paper/70 px-3 py-2.5 text-sm" key={item.name}>
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
-                  <span className="truncate">{item.name}</span>
+                  <span className="truncate font-medium">{item.name}</span>
                 </span>
-                <span className="shrink-0 text-right">{percent(item.ratio)}</span>
+                <span className="shrink-0 text-right font-semibold tabular-nums">{percent(item.ratio)}</span>
               </div>
             ))}
           </div>

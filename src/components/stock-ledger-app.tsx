@@ -7,7 +7,6 @@ import {
   BriefcaseBusiness,
   ChartPie,
   Home,
-  LogOut,
   Plus,
   ReceiptText,
   RefreshCw,
@@ -26,19 +25,20 @@ import { loadStockCatalog, type StockCatalogItem } from "@/lib/stock-lookup";
 import { buildPortfolioUpdates, deleteTradeFromPortfolios, hasOversoldPosition, makeTrade, tradeCashImpact } from "@/lib/trade-ledger";
 import type { CashMovement, CashMovementType, Portfolio, Position, PositionAdjustment, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
 import { Dashboard } from "@/components/stock-ledger/dashboard";
-import { ListSection, Row } from "@/components/stock-ledger/ui";
+import { ConfirmSheet, ListSection, Row } from "@/components/stock-ledger/ui";
 import { Trades } from "@/components/stock-ledger/trades";
 import { Holdings } from "@/components/stock-ledger/holdings";
 import { Analytics } from "@/components/stock-ledger/analytics";
-import { CashForm, PortfolioForm, SettingsForm, StockForm, TradeForm } from "@/components/stock-ledger/forms";
+import { CashForm, PortfolioForm, SettingsForm, StockAdjustForm, StockPriceForm, TradeForm } from "@/components/stock-ledger/forms";
 import { Portfolios } from "@/components/stock-ledger/portfolios";
 
 type Tab = "dashboard" | "portfolios" | "trades" | "holdings" | "analytics";
-type SheetMode = "actions" | "trade" | "cash" | "portfolio" | "stock" | "settings" | null;
+type SheetMode = "actions" | "trade" | "cash" | "portfolio" | "stockActions" | "stockPrice" | "stockAdjust" | "settings" | null;
 type TradeDraft = {
   portfolioId: string;
   type: TradeType;
   buyMode: "unitPrice" | "totalAmount";
+  tradedAt: string;
   symbol: string;
   name: string;
   quantity: string;
@@ -71,13 +71,24 @@ type CsvImportSummary = {
   importedCount: number;
   skipped: { line: number; reason: string; raw: string[] }[];
 };
+type ConfirmState =
+  | { kind: "deleteTrade"; trade: Trade }
+  | { kind: "importJson"; snapshot: LocalSnapshot }
+  | { kind: "adjustCost"; parsed: z.infer<typeof stockSchema> }
+  | null;
 
 const LOCAL_STORAGE_KEY = "stock-ledger-local-v1";
+const PORTFOLIO_SCOPE_STORAGE_KEY = "stock-ledger-selected-portfolio-scope-v1";
+const DEMO_BANNER_DISMISSED_KEY = "stock-ledger-demo-banner-dismissed-v1";
 
 const tradeSchema = z.object({
   portfolioId: z.string().min(1, "請選擇帳本"),
   type: z.enum(["buy", "sell"]),
   buyMode: z.enum(["unitPrice", "totalAmount"]).default("unitPrice"),
+  tradedAt: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "請選擇成交日期")
+    .refine((value) => value <= today(), "成交日期不可晚於今天"),
   symbol: z.string().min(1, "請輸入股票代號").max(20),
   name: z.string().min(1, "請輸入股票名稱").max(80),
   quantity: z.coerce.number().positive("股數需大於 0"),
@@ -150,6 +161,7 @@ const emptyTradeDraft: TradeDraft = {
   portfolioId: "",
   type: "buy",
   buyMode: "unitPrice",
+  tradedAt: today(),
   symbol: "",
   name: "",
   quantity: "",
@@ -179,12 +191,16 @@ export default function StockLedgerApp() {
   const [quoteRefreshing, setQuoteRefreshing] = useState(false);
   const [formError, setFormError] = useState("");
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
-  const [dashboardPortfolioId, setDashboardPortfolioId] = useState("all");
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState("all");
+  const [demoBannerDismissed, setDemoBannerDismissed] = useState(false);
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(emptyTradeDraft);
   const [portfolioDraft, setPortfolioDraft] = useState({ name: "", initialAmount: "", note: "" });
   const [cashDraft, setCashDraft] = useState({ portfolioId: "", type: "deposit" as CashMovementType, amount: "", note: "" });
   const [stockDraft, setStockDraft] = useState({ stockId: "", portfolioId: "", currentPrice: "", quantity: "", holdingCost: "", industry: "", tags: "" });
+  const [stockAdjustBaseline, setStockAdjustBaseline] = useState({ quantity: 0, holdingCost: 0 });
   const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
+  const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+  const [selectedStockActionPosition, setSelectedStockActionPosition] = useState<Position | null>(null);
 
   const positions = useMemo(() => buildPositions(trades, stocks, stockTags, positionAdjustments), [trades, stocks, stockTags, positionAdjustments]);
   const catalogBySymbol = useMemo(() => new Map(stockCatalog.map((item) => [item.symbol, item])), [stockCatalog]);
@@ -194,23 +210,46 @@ export default function StockLedgerApp() {
     if (!timestamps.length) return null;
     return timestamps.reduce((latest, current) => (new Date(current).getTime() > new Date(latest).getTime() ? current : latest));
   }, [stocks]);
-  const dashboardPortfolios = useMemo(
-    () => (dashboardPortfolioId === "all" ? portfolios : portfolios.filter((portfolio) => portfolio.id === dashboardPortfolioId)),
-    [dashboardPortfolioId, portfolios]
+  const scopedPortfolios = useMemo(
+    () => (selectedPortfolioId === "all" ? portfolios : portfolios.filter((portfolio) => portfolio.id === selectedPortfolioId)),
+    [portfolios, selectedPortfolioId]
   );
-  const dashboardPositions = useMemo(
-    () => (dashboardPortfolioId === "all" ? positions : positions.filter((position) => position.portfolio_id === dashboardPortfolioId)),
-    [dashboardPortfolioId, positions]
+  const scopedPositions = useMemo(
+    () => (selectedPortfolioId === "all" ? positions : positions.filter((position) => position.portfolio_id === selectedPortfolioId)),
+    [positions, selectedPortfolioId]
   );
-  const dashboardTrades = useMemo(
-    () => (dashboardPortfolioId === "all" ? trades : trades.filter((trade) => trade.portfolio_id === dashboardPortfolioId)),
-    [dashboardPortfolioId, trades]
+  const scopedTrades = useMemo(
+    () => (selectedPortfolioId === "all" ? trades : trades.filter((trade) => trade.portfolio_id === selectedPortfolioId)),
+    [selectedPortfolioId, trades]
   );
-  const metrics = useMemo(() => calculateDashboardMetrics(dashboardPortfolios, dashboardPositions), [dashboardPortfolios, dashboardPositions]);
+  const defaultTradePortfolioId = useMemo(
+    () => (selectedPortfolioId === "all" ? portfolios[0]?.id || "" : selectedPortfolioId),
+    [portfolios, selectedPortfolioId]
+  );
+  const metrics = useMemo(() => calculateDashboardMetrics(scopedPortfolios, scopedPositions), [scopedPortfolios, scopedPositions]);
+  const catalogSourceLabel = catalogSource === "api" ? "API" : catalogSource === "cache" ? "本地快取" : "fallback";
 
   useEffect(() => {
     void initialize();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedScope = window.localStorage.getItem(PORTFOLIO_SCOPE_STORAGE_KEY);
+    if (storedScope) setSelectedPortfolioId(storedScope);
+    setDemoBannerDismissed(window.localStorage.getItem(DEMO_BANNER_DISMISSED_KEY) === "1");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PORTFOLIO_SCOPE_STORAGE_KEY, selectedPortfolioId);
+  }, [selectedPortfolioId]);
+
+  useEffect(() => {
+    if (selectedPortfolioId !== "all" && portfolios.length && !portfolios.some((portfolio) => portfolio.id === selectedPortfolioId)) {
+      setSelectedPortfolioId("all");
+    }
+  }, [portfolios, selectedPortfolioId]);
 
   useEffect(() => {
     if (loading || hasSupabaseEnv || userId !== "demo") return;
@@ -494,6 +533,11 @@ export default function StockLedgerApp() {
     setUserId(null);
   }
 
+  function dismissDemoBanner() {
+    setDemoBannerDismissed(true);
+    if (typeof window !== "undefined") window.localStorage.setItem(DEMO_BANNER_DISMISSED_KEY, "1");
+  }
+
   async function createPortfolio() {
     setFormError("");
     const parsed = portfolioSchema.safeParse(portfolioDraft);
@@ -587,7 +631,7 @@ export default function StockLedgerApp() {
         : Number(tradeDraft.unitPrice || 0);
     const parsed = tradeSchema.safeParse({
       ...tradeDraft,
-      portfolioId: tradeDraft.portfolioId || portfolios[0]?.id || "",
+      portfolioId: tradeDraft.portfolioId || defaultTradePortfolioId,
       unitPrice: derivedUnitPrice
     });
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
@@ -643,22 +687,22 @@ export default function StockLedgerApp() {
       return setFormError("現金餘額不足。可到設定開啟允許負現金。");
     }
 
-    const tradeBase = makeTrade({
-      id: uid(),
-      userId: userId ?? "demo",
+      const tradeBase = makeTrade({
+        id: uid(),
+        userId: userId ?? "demo",
       portfolioId: portfolio.id,
       stockId: stock.id,
-      type: parsed.data.type,
-      quantity: parsed.data.quantity,
-      unitPrice: parsed.data.unitPrice,
-      settings,
-      tradedAt: today(),
-      createdAt: new Date().toISOString(),
-      note: null
-    });
-    const trade: Trade = editingTrade
-      ? { ...tradeBase, id: editingTrade.id, traded_at: editingTrade.traded_at, created_at: editingTrade.created_at }
-      : tradeBase;
+        type: parsed.data.type,
+        quantity: parsed.data.quantity,
+        unitPrice: parsed.data.unitPrice,
+        settings,
+        tradedAt: parsed.data.tradedAt,
+        createdAt: new Date().toISOString(),
+        note: null
+      });
+      const trade: Trade = editingTrade
+        ? { ...tradeBase, id: editingTrade.id, created_at: editingTrade.created_at }
+        : tradeBase;
     const nextTrades = editingTrade ? trades.map((item) => (item.id === trade.id ? trade : item)) : [trade, ...trades];
     const hasPositionAdjustment = positionAdjustments.some((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id);
     const shouldValidateOversold =
@@ -721,8 +765,6 @@ export default function StockLedgerApp() {
   }
 
   async function deleteTrade(trade: Trade) {
-    const confirmed = window.confirm("確定要刪除這筆交易？帳本現金會同步回復。");
-    if (!confirmed) return;
     setFormError("");
     const portfolio = portfolios.find((item) => item.id === trade.portfolio_id);
     if (!portfolio) {
@@ -765,6 +807,10 @@ export default function StockLedgerApp() {
     setMessage("交易已刪除。");
   }
 
+  function requestDeleteTrade(trade: Trade) {
+    setConfirmState({ kind: "deleteTrade", trade });
+  }
+
   function openEditTrade(trade: Trade) {
     const stock = stocks.find((item) => item.id === trade.stock_id);
     setEditingTradeId(trade.id);
@@ -772,6 +818,7 @@ export default function StockLedgerApp() {
       portfolioId: trade.portfolio_id,
       type: trade.type,
       buyMode: "unitPrice",
+      tradedAt: trade.traded_at,
       symbol: stock?.symbol ?? "",
       name: stock?.name ?? "",
       quantity: String(trade.quantity),
@@ -788,47 +835,105 @@ export default function StockLedgerApp() {
 
   function openNewTrade(type: TradeType) {
     setEditingTradeId(null);
-    setTradeDraft((value) => ({ ...emptyTradeDraft, portfolioId: value.portfolioId || portfolios[0]?.id || "", type }));
+    setTradeDraft({ ...emptyTradeDraft, tradedAt: today(), portfolioId: defaultTradePortfolioId, type });
     setSheetMode("trade");
   }
 
-  async function updateStock() {
+  function openStockPriceEditor(position: Position) {
+    setStockDraft({
+      stockId: position.stock_id,
+      portfolioId: position.portfolio_id,
+      currentPrice: String(position.current_price),
+      quantity: String(position.quantity),
+      holdingCost: String(position.holding_cost),
+      industry: position.industry === "未分類" ? "" : position.industry,
+      tags: position.tags.join(", ")
+    });
+    setSheetMode("stockPrice");
+  }
+
+  function openStockAdjustEditor(position: Position) {
+    const adjustment = positionAdjustments.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
+    setStockDraft({
+      stockId: position.stock_id,
+      portfolioId: position.portfolio_id,
+      currentPrice: String(position.current_price),
+      quantity: String(adjustment?.adjusted_quantity ?? position.quantity),
+      holdingCost: String(adjustment?.adjusted_cost ?? position.holding_cost),
+      industry: position.industry === "未分類" ? "" : position.industry,
+      tags: position.tags.join(", ")
+    });
+    setStockAdjustBaseline({
+      quantity: position.quantity,
+      holdingCost: position.holding_cost
+    });
+    setSheetMode("stockAdjust");
+  }
+
+  function openStockActions(position: Position) {
+    setSelectedStockActionPosition(position);
+    setSheetMode("stockActions");
+  }
+
+  async function updateStockPrice() {
     setFormError("");
-    const parsed = stockSchema.safeParse(stockDraft);
-    if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
-    const stock = stocks.find((item) => item.id === parsed.data.stockId);
+    const stock = stocks.find((item) => item.id === stockDraft.stockId);
     if (!stock) return setFormError("找不到股票");
-    if (parsed.data.quantity === 0 && parsed.data.holdingCost > 0) return setFormError("持有庫存為 0 時，持有成本也必須為 0。");
+    const nextPrice = Number(stockDraft.currentPrice || 0);
+    if (nextPrice < 0) return setFormError("價格不可小於 0。");
 
     const nextStock = {
       ...stock,
-      current_price: parsed.data.currentPrice,
-      industry: parsed.data.industry || null,
+      current_price: nextPrice,
       price_updated_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-    const nextAdjustment: PositionAdjustment = {
-      id: positionAdjustments.find((item) => item.portfolio_id === parsed.data.portfolioId && item.stock_id === stock.id)?.id ?? uid(),
-      user_id: userId ?? "demo",
-      portfolio_id: parsed.data.portfolioId,
-      stock_id: stock.id,
-      adjusted_quantity: parsed.data.quantity,
-      adjusted_cost: parsed.data.holdingCost,
-      created_at: positionAdjustments.find((item) => item.portfolio_id === parsed.data.portfolioId && item.stock_id === stock.id)?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    const nextTags = (parsed.data.tags ?? "")
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter(Boolean)
-      .map((name) => ({ id: uid(), user_id: userId ?? "demo", stock_id: stock.id, name }));
 
     if (supabase && hasSupabaseEnv) {
-      const { error: stockError } = await supabase.from("stocks").update(nextStock).eq("id", stock.id);
-      if (stockError) return setFormError(toUserError(stockError, "更新股票失敗。"));
+      const { error: stockError } = await supabase
+        .from("stocks")
+        .update({
+          current_price: nextStock.current_price,
+          price_updated_at: nextStock.price_updated_at,
+          updated_at: nextStock.updated_at
+        })
+        .eq("id", stock.id);
+      if (stockError) return setFormError(toUserError(stockError, "更新現價失敗。"));
+    }
+
+    setStocks((current) => current.map((item) => (item.id === stock.id ? nextStock : item)));
+    setMessage("現價已更新。");
+    setSheetMode(null);
+  }
+
+  function requestStockAdjustment() {
+    setFormError("");
+    const parsed = stockSchema.safeParse(stockDraft);
+    if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
+    if (parsed.data.quantity === 0 && parsed.data.holdingCost > 0) return setFormError("持有庫存為 0 時，持有成本也必須為 0。");
+    setConfirmState({ kind: "adjustCost", parsed: parsed.data });
+  }
+
+  async function updateStockAdjustment(parsed: z.infer<typeof stockSchema>) {
+    setFormError("");
+    const stock = stocks.find((item) => item.id === parsed.stockId);
+    if (!stock) return setFormError("找不到股票");
+    if (parsed.quantity === 0 && parsed.holdingCost > 0) return setFormError("持有庫存為 0 時，持有成本也必須為 0。");
+    const nextAdjustment: PositionAdjustment = {
+      id: positionAdjustments.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.id ?? uid(),
+      user_id: userId ?? "demo",
+      portfolio_id: parsed.portfolioId,
+      stock_id: stock.id,
+      adjusted_quantity: parsed.quantity,
+      adjusted_cost: parsed.holdingCost,
+      created_at: positionAdjustments.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    if (supabase && hasSupabaseEnv) {
       const adjustmentQuery = supabase.from("position_adjustments");
-      if (parsed.data.quantity === 0 && parsed.data.holdingCost === 0) {
-        const { error: adjustmentError } = await adjustmentQuery.delete().eq("portfolio_id", parsed.data.portfolioId).eq("stock_id", stock.id);
+      if (parsed.quantity === 0 && parsed.holdingCost === 0) {
+        const { error: adjustmentError } = await adjustmentQuery.delete().eq("portfolio_id", parsed.portfolioId).eq("stock_id", stock.id);
         if (adjustmentError && !String(adjustmentError.message).includes("position_adjustments")) {
           return setFormError(toUserError(adjustmentError, "更新持股調整失敗。"));
         }
@@ -842,20 +947,14 @@ export default function StockLedgerApp() {
           );
         }
       }
-      await supabase.from("stock_tags").delete().eq("stock_id", stock.id);
-      if (nextTags.length) {
-        const { error: tagError } = await supabase.from("stock_tags").insert(nextTags);
-        if (tagError) return setFormError(toUserError(tagError, "更新標籤失敗。"));
-      }
     }
 
-    setStocks((current) => current.map((item) => (item.id === stock.id ? nextStock : item)));
     setPositionAdjustments((current) => {
-      const filtered = current.filter((item) => !(item.portfolio_id === parsed.data.portfolioId && item.stock_id === stock.id));
-      return parsed.data.quantity === 0 && parsed.data.holdingCost === 0 ? filtered : [...filtered, nextAdjustment];
+      const filtered = current.filter((item) => !(item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id));
+      return parsed.quantity === 0 && parsed.holdingCost === 0 ? filtered : [...filtered, nextAdjustment];
     });
-    setStockTags((current) => [...current.filter((item) => item.stock_id !== stock.id), ...nextTags]);
-    setMessage("持股資訊已更新。");
+    setMessage("成本校正已更新。");
+    setConfirmState(null);
     setSheetMode(null);
   }
 
@@ -906,20 +1005,7 @@ export default function StockLedgerApp() {
       const parsed = JSON.parse(text) as { data?: unknown };
       const snapshot = normalizeLocalSnapshot((parsed.data ?? parsed) as Partial<LocalSnapshot>);
       if (!snapshot) return setFormError("備份檔格式不正確，請選擇 Stock Ledger JSON 備份檔。");
-      const confirmed = window.confirm("匯入備份會覆蓋目前本機畫面資料，確定繼續？");
-      if (!confirmed) return;
-
-      setUserId("demo");
-      setSettings({ ...snapshot.settings, user_id: "demo" });
-      setPortfolios(snapshot.portfolios.map(normalizePortfolio));
-      setCashMovements(snapshot.cashMovements.map(normalizeCashMovement));
-      setStocks(snapshot.stocks.map(normalizeStock));
-      setStockTags(snapshot.stockTags);
-      setTrades(snapshot.trades.map(normalizeTrade));
-      setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
-      setDashboardPortfolioId("all");
-      setMessage("備份已匯入。");
-      setSheetMode(null);
+      setConfirmState({ kind: "importJson", snapshot });
     } catch (error) {
       console.error("Failed to import backup", error);
       setFormError("備份檔讀取失敗，請確認檔案是有效 JSON。");
@@ -1041,12 +1127,24 @@ export default function StockLedgerApp() {
       setTrades(nextTrades);
       setPortfolios(nextPortfolios);
       const importedCount = nextTrades.length - trades.length;
+      const reasonBuckets = [
+        { label: "欄位錯誤", count: skipped.filter((item) => item.reason.includes("欄位缺漏")).length },
+        { label: "無帳本", count: skipped.filter((item) => item.reason.includes("帳本")).length },
+        { label: "賣超", count: skipped.filter((item) => item.reason.includes("賣出股數超過")).length },
+        { label: "現金不足", count: skipped.filter((item) => item.reason.includes("現金不足")).length }
+      ].filter((item) => item.count > 0).slice(0, 3);
       setCsvImportSummary({
         totalRows: parsedRows.length,
         importedCount,
         skipped
       });
-      setMessage("CSV 匯入完成，成功 " + importedCount + " 筆，跳過 " + skipped.length + " 筆。");
+      setMessage(
+        "CSV 匯入完成：新增 " +
+          importedCount +
+          "、略過 " +
+          skipped.length +
+          (reasonBuckets.length ? "。主因：" + reasonBuckets.map((item) => item.label + " " + item.count).join("、") : "")
+      );
     } catch (error) {
       console.error("Failed to import CSV", error);
       setFormError("CSV 解析失敗，請確認格式與欄位。");
@@ -1057,7 +1155,7 @@ export default function StockLedgerApp() {
     const confirmed = window.confirm("確定要清除本機資料並重新載入 demo？此動作不會影響 Supabase。");
     if (!confirmed) return;
     if (typeof window !== "undefined") window.localStorage.removeItem(LOCAL_STORAGE_KEY);
-    setDashboardPortfolioId("all");
+    setSelectedPortfolioId("all");
     seedDemoData();
     setMessage("已重置成本機 demo 資料。");
     setSheetMode(null);
@@ -1090,44 +1188,41 @@ export default function StockLedgerApp() {
   }
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-2xl pb-[calc(7rem+env(safe-area-inset-bottom))]">
+    <main className="mx-auto min-h-screen w-full max-w-2xl pb-[calc(9rem+env(safe-area-inset-bottom))]">
       <header className="sticky top-0 z-20 flex items-center justify-between bg-paper/90 px-4 py-3 backdrop-blur">
         <div>
           <p className="text-xs font-semibold text-mint">Stock Ledger</p>
           <h1 className="text-lg font-bold">股票交易帳本</h1>
-          <p className="mt-1 text-xs text-ink/60">
-            資料來源：
-            {catalogSource === "api" ? "API" : catalogSource === "cache" ? "本地快取" : "fallback"}
-          </p>
-          <p className="mt-1 text-xs text-ink/45">現價更新：{formatQuoteUpdatedAt(latestQuoteAt)} · 90 秒自動更新</p>
         </div>
         <div className="flex items-center gap-1">
           <button
             className="rounded-full p-2 text-ink/75 disabled:opacity-45"
-            title="更新近即時股價"
+            aria-label="更新現價"
+            title="更新現價"
             onClick={() => void refreshQuotes()}
             disabled={quoteRefreshing}
           >
             <RefreshCw size={20} className={quoteRefreshing ? "animate-spin" : ""} />
           </button>
-          <button className="rounded-full p-2 text-ink/75 disabled:opacity-45" title="重新載入股票目錄" onClick={() => void reloadStockCatalog()} disabled={catalogLoading}>
-            <BookOpen size={20} className={catalogLoading ? "animate-pulse" : ""} />
-          </button>
-          <button className="rounded-full p-2 text-ink/75" title="設定" onClick={() => setSheetMode("settings")}>
+          <button className="rounded-full p-2 text-ink/75" aria-label="開啟設定" title="設定" onClick={() => setSheetMode("settings")}>
             <Settings size={20} />
           </button>
-          {hasSupabaseEnv && (
-            <button className="rounded-full p-2 text-ink/75" title="登出" onClick={signOut}>
-              <LogOut size={20} />
-            </button>
-          )}
         </div>
       </header>
+
+      {!hasSupabaseEnv && !demoBannerDismissed && (
+        <section className="mx-4 mt-2 flex items-start justify-between gap-3 rounded-md border border-gold/30 bg-white px-3 py-2 text-xs text-ink/70 shadow-soft">
+          <p>未設定 Supabase，現在顯示 demo 資料。填入 `.env.local` 後即可使用雲端同步。</p>
+          <button className="shrink-0 text-ink/45" aria-label="關閉 demo 提示" onClick={dismissDemoBanner}>
+            <X size={16} />
+          </button>
+        </section>
+      )}
 
       {message && (
         <section className="mx-4 mt-3 flex items-start justify-between gap-3 rounded-md border border-mint/20 bg-white px-3 py-2 text-sm text-ink/70 shadow-soft">
           <p>{message}</p>
-          <button className="shrink-0 text-ink/45" onClick={() => setMessage("")}>
+          <button className="shrink-0 text-ink/45" aria-label="關閉訊息" onClick={() => setMessage("")}>
             <X size={16} />
           </button>
         </section>
@@ -1136,7 +1231,7 @@ export default function StockLedgerApp() {
       {formError && !sheetMode && (
         <section className="mx-4 mt-3 flex items-start justify-between gap-3 rounded-md border border-coral/20 bg-coral/10 px-3 py-2 text-sm text-coral shadow-soft">
           <p>{formError}</p>
-          <button className="shrink-0 text-coral/70" onClick={() => setFormError("")}>
+          <button className="shrink-0 text-coral/70" aria-label="關閉錯誤訊息" onClick={() => setFormError("")}>
             <X size={16} />
           </button>
         </section>
@@ -1146,12 +1241,13 @@ export default function StockLedgerApp() {
         {activeTab === "dashboard" && (
           <Dashboard
             metrics={metrics}
-            positions={dashboardPositions}
-            trades={dashboardTrades}
+            positions={scopedPositions}
+            trades={scopedTrades}
             stocks={stocks}
             portfolios={portfolios}
-            selectedPortfolioId={dashboardPortfolioId}
-            onPortfolioChange={setDashboardPortfolioId}
+            selectedPortfolioId={selectedPortfolioId}
+            onPortfolioChange={setSelectedPortfolioId}
+            onEditTrade={openEditTrade}
           />
         )}
         {activeTab === "portfolios" && (
@@ -1159,38 +1255,41 @@ export default function StockLedgerApp() {
         )}
         {activeTab === "trades" && (
           <Trades
-            trades={trades}
+            trades={scopedTrades}
             stocks={stocks}
             portfolios={portfolios}
             importSummary={csvImportSummary}
             onEdit={openEditTrade}
-            onDelete={deleteTrade}
+            onDelete={requestDeleteTrade}
             onImportCsv={importTradesCsv}
           />
         )}
         {activeTab === "holdings" && (
           <Holdings
-            positions={positions}
-            onEdit={(position) => {
-              const adjustment = positionAdjustments.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
-              setStockDraft({
-                stockId: position.stock_id,
-                portfolioId: position.portfolio_id,
-                currentPrice: String(position.current_price),
-                quantity: String(adjustment?.adjusted_quantity ?? position.quantity),
-                holdingCost: String(adjustment?.adjusted_cost ?? position.holding_cost),
-                industry: position.industry === "未分類" ? "" : position.industry,
-                tags: position.tags.join(", ")
-              });
-              setSheetMode("stock");
-            }}
+            positions={scopedPositions}
+            portfolios={portfolios}
+            selectedPortfolioId={selectedPortfolioId}
+            onPortfolioChange={setSelectedPortfolioId}
+            onUpdatePrice={openStockPriceEditor}
+            onAdjustCost={openStockActions}
           />
         )}
-        {activeTab === "analytics" && <Analytics positions={positions} trades={trades} />}
+        {activeTab === "analytics" && (
+          <Analytics
+            positions={scopedPositions}
+            trades={scopedTrades}
+            stocks={stocks}
+            portfolios={portfolios}
+            selectedPortfolioId={selectedPortfolioId}
+            onPortfolioChange={setSelectedPortfolioId}
+            cash={metrics.cash}
+          />
+        )}
       </section>
 
       <button
         className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-coral text-white shadow-soft"
+        aria-label="開啟新增選單"
         title="新增"
         onClick={() => setSheetMode("actions")}
       >
@@ -1204,7 +1303,7 @@ export default function StockLedgerApp() {
           <section className="mx-auto max-h-[86vh] w-full max-w-2xl overflow-auto rounded-t-xl bg-white p-4 shadow-soft" onClick={(event) => event.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-lg font-bold">{sheetMode === "trade" && editingTradeId ? "編輯交易" : sheetTitle(sheetMode)}</h2>
-              <button className="rounded-full p-2" onClick={() => setSheetMode(null)}>
+              <button className="rounded-full p-2" aria-label="關閉視窗" onClick={() => setSheetMode(null)}>
                 <X size={20} />
               </button>
             </div>
@@ -1220,12 +1319,28 @@ export default function StockLedgerApp() {
                 onCash={() => setSheetMode("cash")}
               />
             )}
+            {sheetMode === "stockActions" && selectedStockActionPosition && (
+              <div className="grid gap-3">
+                <button
+                  className="flex min-h-14 items-center gap-3 rounded-lg bg-ink px-4 py-3 text-left font-semibold text-white"
+                  onClick={() => openStockPriceEditor(selectedStockActionPosition)}
+                >
+                  更新現價
+                </button>
+                <button
+                  className="flex min-h-14 items-center gap-3 rounded-lg border-2 border-ink bg-white px-4 py-3 text-left font-semibold text-ink"
+                  onClick={() => openStockAdjustEditor(selectedStockActionPosition)}
+                >
+                  校正成本
+                </button>
+              </div>
+            )}
             {sheetMode === "trade" && (
               <TradeForm
                 draft={tradeDraft}
                 setDraft={setTradeDraft}
                 portfolios={portfolios}
-                positions={positions}
+                positions={scopedPositions}
                 stocks={stocks}
                 settings={settings}
                 stockCatalog={stockCatalog}
@@ -1236,24 +1351,76 @@ export default function StockLedgerApp() {
             )}
             {sheetMode === "portfolio" && <PortfolioForm draft={portfolioDraft} setDraft={setPortfolioDraft} onSubmit={createPortfolio} />}
             {sheetMode === "cash" && <CashForm draft={cashDraft} setDraft={setCashDraft} portfolios={portfolios} onSubmit={createCashMovement} />}
-            {sheetMode === "stock" && <StockForm draft={stockDraft} setDraft={setStockDraft} onSubmit={updateStock} />}
+            {sheetMode === "stockPrice" && <StockPriceForm draft={stockDraft} setDraft={setStockDraft} onSubmit={updateStockPrice} />}
+            {sheetMode === "stockAdjust" && (
+              <StockAdjustForm draft={stockDraft} baseline={stockAdjustBaseline} setDraft={setStockDraft} onSubmit={requestStockAdjustment} />
+            )}
             {sheetMode === "settings" && (
               <SettingsForm
                 settings={settings}
                 setSettings={setSettings}
+                dataSyncInfo={{
+                  catalogSourceLabel,
+                  latestQuoteLabel: formatQuoteUpdatedAt(latestQuoteAt),
+                  autoRefreshLabel: "90 秒自動更新"
+                }}
                 onSubmit={updateSettings}
                 onExport={exportJsonBackup}
                 onImport={importJsonBackup}
                 onResetLocal={resetLocalDemoData}
+                onReloadCatalog={() => void reloadStockCatalog()}
+                onSignOut={hasSupabaseEnv ? () => void signOut() : undefined}
               />
             )}
           </section>
         </div>
       )}
 
-      {!hasSupabaseEnv && (
-        <div className="fixed left-3 right-3 top-16 z-20 mx-auto max-w-md rounded-md border border-gold/30 bg-white px-3 py-2 text-xs text-ink/70 shadow-soft">
-          未設定 Supabase，現在顯示 demo 資料。填入 `.env.local` 後即可使用雲端同步。        </div>
+      {confirmState?.kind === "deleteTrade" && (
+        <ConfirmSheet
+          title="刪除交易"
+          body="刪除此交易後，帳本現金與持股計算會同步回復。"
+          confirmLabel="確認刪除"
+          tone="danger"
+          onCancel={() => setConfirmState(null)}
+          onConfirm={() => void deleteTrade(confirmState.trade).finally(() => setConfirmState(null))}
+        />
+      )}
+
+      {confirmState?.kind === "importJson" && (
+        <ConfirmSheet
+          title="匯入 JSON 備份"
+          body="匯入備份會覆蓋目前本機畫面資料。若要保留現在內容，請先匯出 JSON。"
+          confirmLabel="確認匯入"
+          tone="primary"
+          onCancel={() => setConfirmState(null)}
+          onConfirm={() => {
+            const snapshot = confirmState.snapshot;
+            setUserId("demo");
+            setSettings({ ...snapshot.settings, user_id: "demo" });
+            setPortfolios(snapshot.portfolios.map(normalizePortfolio));
+            setCashMovements(snapshot.cashMovements.map(normalizeCashMovement));
+            setStocks(snapshot.stocks.map(normalizeStock));
+            setStockTags(snapshot.stockTags);
+            setTrades(snapshot.trades.map(normalizeTrade));
+            setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
+            setSelectedPortfolioId("all");
+            setConfirmState(null);
+            setMessage("備份已匯入。");
+            setSheetMode(null);
+          }}
+        />
+      )}
+
+      {confirmState?.kind === "adjustCost" && (
+        <ConfirmSheet
+          title="確認校正成本"
+          body="此操作不會新增交易，僅覆寫顯示用成本。確認後會以手動股數與持有成本覆蓋目前畫面計算。"
+          confirmLabel="確認校正"
+          tone="primary"
+          onCancel={() => setConfirmState(null)}
+          onConfirm={() => void updateStockAdjustment(confirmState.parsed)}
+        />
       )}
     </main>
   );
@@ -1313,7 +1480,9 @@ function sheetTitle(mode: SheetMode) {
     trade: "新增交易",
     cash: "資金異動",
     portfolio: "新增帳本",
-    stock: "更新股票資訊",
+    stockPrice: "更新現價",
+    stockAdjust: "校正成本",
+    stockActions: "調整持股",
     settings: "設定"
   };
   return mode ? titles[mode] : "";
@@ -1321,8 +1490,8 @@ function sheetTitle(mode: SheetMode) {
 
 function QuickActions({ onBuy, onSell, onCash }: { onBuy: () => void; onSell: () => void; onCash: () => void }) {
   const actions = [
-    { label: "買入", icon: <TrendingUp size={20} />, onClick: onBuy, className: "bg-coral text-white" },
-    { label: "賣出", icon: <TrendingDown size={20} />, onClick: onSell, className: "bg-mint text-white" },
+    { label: "買入", icon: <TrendingUp size={20} />, onClick: onBuy, className: "bg-ink text-white" },
+    { label: "賣出", icon: <TrendingDown size={20} />, onClick: onSell, className: "border-2 border-ink bg-white text-ink" },
     { label: "資金異動", icon: <Wallet size={20} />, onClick: onCash, className: "bg-ink text-white" }
   ];
 

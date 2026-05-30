@@ -10,6 +10,7 @@ type TradeDraft = {
   portfolioId: string;
   type: TradeType;
   buyMode: "unitPrice" | "totalAmount";
+  tradedAt: string;
   symbol: string;
   name: string;
   quantity: string;
@@ -22,6 +23,7 @@ type TradeDraft = {
 type PortfolioDraft = { name: string; initialAmount: string; note: string };
 type CashDraft = { portfolioId: string; type: CashMovementType; amount: string; note: string };
 type StockDraft = { stockId: string; portfolioId: string; currentPrice: string; quantity: string; holdingCost: string; industry: string; tags: string };
+type StockAdjustBaseline = { quantity: number; holdingCost: number };
 
 function StockSuggestionMenu({ items, onPick }: { items: StockCatalogItem[]; onPick: (item: StockCatalogItem) => void }) {
   return (
@@ -162,6 +164,7 @@ export function TradeForm({
         ]}
       />
       <Select value={selectedPortfolioId} onChange={(portfolioId) => setDraft((value) => ({ ...value, portfolioId }))} options={portfolios.map((item) => [item.id, item.name])} />
+      <Field label="成交日期" type="date" value={draft.tradedAt} onChange={(tradedAt) => setDraft((value) => ({ ...value, tradedAt }))} />
       <div className="relative">
         <Field
           label="股票代號"
@@ -286,17 +289,43 @@ export function CashForm({ draft, setDraft, portfolios, onSubmit }: { draft: Cas
   );
 }
 
-export function StockForm({ draft, setDraft, onSubmit }: { draft: StockDraft; setDraft: (value: StockDraft | ((value: StockDraft) => StockDraft)) => void; onSubmit: () => void }) {
+export function StockPriceForm({
+  draft,
+  setDraft,
+  onSubmit
+}: {
+  draft: StockDraft;
+  setDraft: (value: StockDraft | ((value: StockDraft) => StockDraft)) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <Field label="目前價格" type="number" value={draft.currentPrice} onChange={(currentPrice) => setDraft((value) => ({ ...value, currentPrice }))} />
+      <SubmitButton onClick={onSubmit}>更新現價</SubmitButton>
+    </div>
+  );
+}
+
+export function StockAdjustForm({
+  draft,
+  baseline,
+  setDraft,
+  onSubmit
+}: {
+  draft: StockDraft;
+  baseline: StockAdjustBaseline;
+  setDraft: (value: StockDraft | ((value: StockDraft) => StockDraft)) => void;
+  onSubmit: () => void;
+}) {
   const quantity = Number(draft.quantity || 0);
   const holdingCost = Number(draft.holdingCost || 0);
   const averageCost = quantity > 0 ? holdingCost / quantity : 0;
 
   return (
     <div className="space-y-3">
-      <Field label="目前價格" type="number" value={draft.currentPrice} onChange={(currentPrice) => setDraft((value) => ({ ...value, currentPrice }))} />
       <div className="grid grid-cols-2 gap-3">
         <Field label="持有庫存" type="number" value={draft.quantity} onChange={(quantity) => setDraft((value) => ({ ...value, quantity }))} />
-        <Field label="持有成本" type="number" value={draft.holdingCost} onChange={(holdingCost) => setDraft((value) => ({ ...value, holdingCost }))} />
+        <Field label="持有成本(含手續費)" type="number" value={draft.holdingCost} onChange={(holdingCost) => setDraft((value) => ({ ...value, holdingCost }))} />
       </div>
       <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
         <div className="flex justify-between">
@@ -304,9 +333,19 @@ export function StockForm({ draft, setDraft, onSubmit }: { draft: StockDraft; se
           <strong>{decimal(averageCost, 1)}</strong>
         </div>
       </section>
-      <Field label="產業別" value={draft.industry} onChange={(industry) => setDraft((value) => ({ ...value, industry }))} />
-      <Field label="標籤，以逗號分隔" value={draft.tags} onChange={(tags) => setDraft((value) => ({ ...value, tags }))} placeholder="核心, 長期" />
-      <SubmitButton onClick={onSubmit}>更新持股資訊</SubmitButton>
+      <section className="rounded-lg border border-gold/20 bg-gold/5 p-3 text-sm">
+        <p className="font-semibold text-ink">校正前對照</p>
+        <div className="mt-2 flex justify-between">
+          <span className="text-ink/60">系統股數 / 成本</span>
+          <strong>{baseline.quantity} 股 / {currency(baseline.holdingCost)}</strong>
+        </div>
+        <div className="mt-2 flex justify-between">
+          <span className="text-ink/60">將寫入手動值</span>
+          <strong>{quantity} 股 / {currency(holdingCost)}</strong>
+        </div>
+        <p className="mt-2 text-xs text-ink/60">此操作不會新增交易，僅覆寫顯示用成本。</p>
+      </section>
+      <SubmitButton onClick={onSubmit}>送出校正</SubmitButton>
     </div>
   );
 }
@@ -314,23 +353,55 @@ export function StockForm({ draft, setDraft, onSubmit }: { draft: StockDraft; se
 export function SettingsForm({
   settings,
   setSettings,
+  dataSyncInfo,
   onSubmit,
   onExport,
   onImport,
-  onResetLocal
+  onResetLocal,
+  onReloadCatalog,
+  onSignOut
 }: {
   settings: UserSettings;
   setSettings: (settings: UserSettings) => void;
+  dataSyncInfo: { catalogSourceLabel: string; latestQuoteLabel: string; autoRefreshLabel: string };
   onSubmit: () => void;
   onExport: () => void;
   onImport: (file: File) => void;
   onResetLocal: () => void;
+  onReloadCatalog: () => void;
+  onSignOut?: () => void;
 }) {
   return (
     <div className="space-y-3">
       <Field label="手續費率" type="number" value={String(settings.fee_rate)} onChange={(feeRate) => setSettings({ ...settings, fee_rate: Number(feeRate) })} />
       <Field label="交易稅率" type="number" value={String(settings.tax_rate)} onChange={(taxRate) => setSettings({ ...settings, tax_rate: Number(taxRate) })} />
       <Field label="最低手續費" type="number" value={String(settings.minimum_fee)} onChange={(minimumFee) => setSettings({ ...settings, minimum_fee: Number(minimumFee) })} />
+      <section className="rounded-lg border border-ink/10 bg-paper px-3 py-3 text-sm text-ink/70">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-semibold text-ink">資料與同步</p>
+          <button className="rounded-md border border-ink/10 px-2 py-1 text-xs font-semibold text-ink" onClick={onReloadCatalog}>
+            重新載入目錄
+          </button>
+        </div>
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex justify-between gap-3">
+            <span className="text-ink/55">目錄來源</span>
+            <strong>{dataSyncInfo.catalogSourceLabel}</strong>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-ink/55">現價更新</span>
+            <strong>{dataSyncInfo.latestQuoteLabel}</strong>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-ink/55">自動更新</span>
+            <strong>{dataSyncInfo.autoRefreshLabel}</strong>
+          </div>
+        </div>
+      </section>
+      <section className="rounded-lg border border-ink/10 bg-paper px-3 py-3 text-sm text-ink/70">
+        <p className="font-semibold text-ink">顏色說明</p>
+        <p className="mt-1">紅色表示獲利、綠色表示虧損。</p>
+      </section>
       <label className="flex items-center justify-between rounded-lg border border-ink/10 p-3">
         <span>允許現金為負</span>
         <input type="checkbox" checked={settings.allow_negative_cash} onChange={(event) => setSettings({ ...settings, allow_negative_cash: event.target.checked })} />
@@ -361,6 +432,11 @@ export function SettingsForm({
           重置成本機 demo
         </button>
       </section>
+      {onSignOut ? (
+        <button className="w-full rounded-md border border-ink/15 px-3 py-3 text-sm font-semibold text-ink" onClick={onSignOut}>
+          登出
+        </button>
+      ) : null}
       <SubmitButton onClick={onSubmit}>儲存設定</SubmitButton>
     </div>
   );
