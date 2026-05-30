@@ -161,10 +161,10 @@ export function Trades({
             <TradeRow
               key={trade.id}
               trade={trade}
-              title={(trade.type === "buy" ? "買入" : "賣出") + " " + (stock?.symbol ?? "") + " " + (stock?.name ?? "")}
+              type={trade.type}
+              title={(stock?.symbol ?? "") + " " + (stock?.name ?? "")}
               subtitle={(portfolioMap.get(trade.portfolio_id) ?? "") + " · " + trade.quantity + " 股 x " + currency(trade.unit_price) + " · 手續費 " + currency(trade.fee)}
               right={currency(trade.net_amount)}
-              rightClass={trade.type === "buy" ? "text-coral" : "text-mint"}
               onEdit={onEdit}
               onDelete={onDelete}
             />
@@ -223,29 +223,39 @@ function triggerCsvDownload(csv: string, filename: string) {
 
 function TradeRow({
   trade,
+  type,
   title,
   subtitle,
   right,
-  rightClass,
   onEdit,
   onDelete
 }: {
   trade: Trade;
+  type: TradeType;
   title: string;
   subtitle: string;
   right: string;
-  rightClass: string;
   onEdit: (trade: Trade) => void;
   onDelete: (trade: Trade) => void;
 }) {
   return (
-    <div className="border-b border-ink/5 pb-3 last:border-0 last:pb-0">
+    <div className="border-b border-ink/5 pb-3 last:mb-24 last:border-0 last:pb-0">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-semibold">{title}</p>
+          <div className="flex items-center gap-2">
+            <span
+              className={
+                "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold " +
+                (type === "buy" ? "bg-ink text-white" : "border border-ink/20 bg-white text-ink")
+              }
+            >
+              {type === "buy" ? "買入" : "賣出"}
+            </span>
+            <p className="truncate font-semibold">{title}</p>
+          </div>
           <p className="mt-1 truncate text-sm text-ink/55">{subtitle}</p>
         </div>
-        <p className={"shrink-0 text-sm font-bold " + rightClass}>{right}</p>
+        <p className="shrink-0 text-sm font-bold text-ink">{right}</p>
       </div>
       <div className="mt-3 flex gap-2">
         <button className="flex items-center gap-1 rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onEdit(trade)}>

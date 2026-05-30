@@ -3,6 +3,7 @@ import {
   buildPositions,
   calculateDashboardMetrics,
   calculateTradeAmounts,
+  compareTradesChronologically,
   DEFAULT_SETTINGS,
   resolveUnitPriceFromTotalAmount,
   validateSellQuantity
@@ -99,6 +100,21 @@ describe("calculateTradeAmounts", () => {
         settings: DEFAULT_SETTINGS
       })
     ).toBe(100);
+  });
+});
+
+describe("compareTradesChronologically", () => {
+  it("keeps same-day buys before sells and preserves created_at ordering", () => {
+    const rows = [
+      trade({ id: "sell-late", type: "sell", traded_at: "2026-01-02", created_at: "2026-01-02T09:00:00.000Z" }),
+      trade({ id: "buy-early", type: "buy", traded_at: "2026-01-02", created_at: "2026-01-02T08:00:00.000Z" }),
+      trade({ id: "older-day", type: "buy", traded_at: "2026-01-01", created_at: "2026-01-01T10:00:00.000Z" }),
+      trade({ id: "buy-late", type: "buy", traded_at: "2026-01-02", created_at: "2026-01-02T10:00:00.000Z" })
+    ];
+
+    const sorted = [...rows].sort(compareTradesChronologically);
+
+    expect(sorted.map((item) => item.id)).toEqual(["older-day", "buy-early", "buy-late", "sell-late"]);
   });
 });
 

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { DashboardMetrics, Portfolio, Position, Stock, Trade } from "@/lib/types";
 import { currency, percent, profitClass } from "@/lib/format";
-import { ListSection, Metric, Row, SmallCard } from "./ui";
+import { InfoTip, ListSection, Metric, Row, SmallCard } from "./ui";
 
 function toneClass(value: number) {
   if (value > 0) return "text-coral";
@@ -16,7 +16,8 @@ export function Dashboard({
   stocks,
   portfolios,
   selectedPortfolioId,
-  onPortfolioChange
+  onPortfolioChange,
+  onEditTrade
 }: {
   metrics: DashboardMetrics;
   positions: Position[];
@@ -25,6 +26,7 @@ export function Dashboard({
   portfolios: Portfolio[];
   selectedPortfolioId: string;
   onPortfolioChange: (portfolioId: string) => void;
+  onEditTrade: (trade: Trade) => void;
 }) {
   const [detailMode, setDetailMode] = useState<"realized" | "unrealized" | null>(null);
   const topPositions = positions
@@ -81,27 +83,28 @@ export function Dashboard({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-        <label className="block">
-          <span className="text-sm font-semibold">帳本篩選</span>
-          <select
-            className="mt-2 w-full rounded-md border border-ink/15 bg-white px-3 py-3 outline-none focus:border-mint"
-            value={selectedPortfolioId}
-            onChange={(event) => onPortfolioChange(event.target.value)}
-          >
-            <option value="all">全部帳本</option>
-            {portfolios.map((portfolio) => (
-              <option key={portfolio.id} value={portfolio.id}>
-                {portfolio.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      </section>
       <section className="overflow-hidden rounded-lg bg-ink shadow-soft">
-        <div className="border-b border-white/10 px-5 py-5 text-white">
-          <p className="text-sm text-white/65">總資產</p>
-          <p className="mt-1 text-3xl font-bold tracking-tight">{currency(metrics.totalAssets)}</p>
+        <div className="border-b border-white/10 px-4 py-4 text-white">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm text-white/65">總資產</p>
+              <p className="mt-1 text-3xl font-bold tracking-tight">{currency(metrics.totalAssets)}</p>
+            </div>
+            <select
+              className="h-10 max-w-[11rem] rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white outline-none focus:border-white/30"
+              value={selectedPortfolioId}
+              onChange={(event) => onPortfolioChange(event.target.value)}
+            >
+              <option className="text-ink" value="all">
+                全部帳本
+              </option>
+              {portfolios.map((portfolio) => (
+                <option className="text-ink" key={portfolio.id} value={portfolio.id}>
+                  {portfolio.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <Metric label="總損益" value={currency(metrics.totalProfit)} strong className={metrics.totalProfit >= 0 ? "text-red-200" : "text-emerald-200"} />
             <Metric label="總報酬率" value={percent(metrics.totalReturnRate)} strong className={metrics.totalReturnRate >= 0 ? "text-red-200" : "text-emerald-200"} />
@@ -113,7 +116,16 @@ export function Dashboard({
             <p className="mt-2 text-lg font-semibold">{currency(metrics.cash)}</p>
           </div>
           <div className="bg-ink px-5 py-4 text-white">
-            <p className="text-xs text-white/55">持倉成本</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-white/55">持倉成本</p>
+              <InfoTip
+                label="持倉成本說明"
+                body={[
+                  "持倉成本為目前尚持有部位的剩餘成本。",
+                  "此數值包含買入手續費，不含已賣出部位已實現的成本。"
+                ]}
+              />
+            </div>
             <p className="mt-2 text-lg font-semibold">{currency(metrics.holdingCost)}</p>
           </div>
           <div className="bg-ink px-5 py-4 text-white">
@@ -121,7 +133,16 @@ export function Dashboard({
             <p className="mt-2 text-lg font-semibold">{currency(metrics.holdingsValue)}</p>
           </div>
           <div className="bg-ink px-5 py-4 text-white">
-            <p className="text-xs text-white/55">總持股報酬</p>
+            <div className="flex items-center gap-1">
+              <p className="text-xs text-white/55">總持股報酬</p>
+              <InfoTip
+                label="總持股報酬說明"
+                body={[
+                  "總持股報酬等於已實現損益加未實現損益。",
+                  "它反映目前持倉與已賣出部位合計的持股獲利表現。"
+                ]}
+              />
+            </div>
             <p className={"mt-2 text-lg font-semibold " + toneClass(metrics.unrealizedProfit + metrics.realizedProfit)}>{currency(metrics.realizedProfit + metrics.unrealizedProfit)}</p>
           </div>
         </div>
@@ -177,12 +198,14 @@ export function Dashboard({
       </ListSection>
       <ListSection title="最近交易" empty="尚無交易">
         {recentTrades.map((trade) => (
+          <button key={trade.id} className="w-full text-left" onClick={() => onEditTrade(trade)}>
           <Row
             key={trade.id}
             title={(trade.type === "buy" ? "買入" : "賣出") + " " + (stockMap.get(trade.stock_id)?.symbol ?? "") + " " + (stockMap.get(trade.stock_id)?.name ?? "")}
             subtitle={trade.traded_at + " · " + trade.quantity + " 股"}
             right={currency(trade.net_amount)}
           />
+          </button>
         ))}
       </ListSection>
     </div>

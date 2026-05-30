@@ -213,15 +213,18 @@ export function validateSellQuantity(trades: Trade[], stockId: string, portfolio
 
 export function calculateDashboardMetrics(portfolios: Portfolio[], positions: Position[]): DashboardMetrics {
   const cash = roundMoney(portfolios.reduce((sum, portfolio) => sum + portfolio.cash_balance, 0));
+  // 持倉成本 = 目前仍持有部位的 remaining_cost / holding_cost 合計
   const holdingCost = roundMoney(positions.reduce((sum, position) => sum + position.holding_cost, 0));
   const holdingsValue = roundMoney(positions.reduce((sum, position) => sum + position.market_value, 0));
   const realizedProfit = roundMoney(positions.reduce((sum, position) => sum + position.realized_profit, 0));
   const unrealizedProfit = roundMoney(positions.reduce((sum, position) => sum + position.unrealized_profit, 0));
+  // 總持股報酬 = 已實現損益 + 未實現損益
   const totalProfit = roundMoney(realizedProfit + unrealizedProfit);
   const totalDeposits = portfolios.reduce((sum, portfolio) => sum + portfolio.total_deposits, 0);
 
   return {
     cash,
+    totalDeposits: roundMoney(totalDeposits),
     holdingCost,
     holdingsValue,
     totalAssets: roundMoney(cash + holdingsValue),

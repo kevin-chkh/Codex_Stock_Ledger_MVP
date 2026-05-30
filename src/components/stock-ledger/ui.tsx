@@ -1,3 +1,4 @@
+import { CircleHelp } from "lucide-react";
 import type { ReactNode } from "react";
 
 export function Metric({ label, value, strong, className = "" }: { label: string; value: string; strong?: boolean; className?: string }) {
@@ -104,6 +105,24 @@ export function Field({
   );
 }
 
+export function InfoTip({ label, body }: { label: string; body: string[] }) {
+  return (
+    <details className="group relative inline-block">
+      <summary aria-label={label} className="list-none cursor-pointer text-white/55 transition hover:text-white/80">
+        <CircleHelp size={14} />
+      </summary>
+      <div className="absolute right-0 z-20 mt-2 w-56 rounded-md border border-ink/10 bg-white p-3 text-left text-xs leading-5 text-ink shadow-soft">
+        <p className="font-semibold text-ink">{label}</p>
+        <div className="mt-2 space-y-1">
+          {body.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export function Select({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[][] }) {
   return (
     <label className="block">
@@ -137,5 +156,68 @@ export function SubmitButton({ children, onClick }: { children: ReactNode; onCli
     <button className="sticky bottom-0 w-full rounded-md bg-mint px-4 py-3 font-semibold text-white shadow-soft" onClick={onClick}>
       {children}
     </button>
+  );
+}
+
+export function PortfolioScopePicker({
+  label,
+  value,
+  onChange,
+  options
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: string[][];
+}) {
+  return (
+    <label className="inline-flex items-center gap-2 rounded-full border border-ink/10 bg-white px-3 py-2 text-sm shadow-soft">
+      <span className="shrink-0 text-ink/55">{label}</span>
+      <select className="min-w-0 bg-transparent pr-5 text-sm font-semibold outline-none" value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map(([optionValue, optionLabel]) => (
+          <option key={optionValue} value={optionValue}>
+            {optionLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+export function ConfirmSheet({
+  title,
+  body,
+  confirmLabel,
+  tone = "danger",
+  onConfirm,
+  onCancel
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  tone?: "danger" | "primary";
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/35" onClick={onCancel}>
+      <section className="mx-auto w-full max-w-2xl rounded-t-xl bg-white p-4 shadow-soft" onClick={(event) => event.stopPropagation()}>
+        <h2 className="text-lg font-bold">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-ink/65">{body}</p>
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <button className="rounded-md border border-ink/10 px-4 py-3 font-semibold text-ink" onClick={onCancel}>
+            取消
+          </button>
+          <button
+            className={
+              "rounded-md px-4 py-3 font-semibold text-white " + (tone === "danger" ? "bg-coral" : "bg-mint")
+            }
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }

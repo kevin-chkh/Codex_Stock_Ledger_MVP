@@ -108,6 +108,7 @@ export type Position = {
 
 export type DashboardMetrics = {
   cash: number;
+  totalDeposits: number;
   holdingCost: number;
   holdingsValue: number;
   totalAssets: number;
