@@ -9,13 +9,36 @@ export function Metric({ label, value, strong, className = "" }: { label: string
   );
 }
 
-export function SmallCard({ label, value, valueClass = "" }: { label: string; value: string; valueClass?: string }) {
-  return (
-    <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+export function SmallCard({
+  label,
+  value,
+  hint,
+  onClick,
+  valueClass = ""
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  onClick?: () => void;
+  valueClass?: string;
+}) {
+  const content = (
+    <>
       <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink/45">{label}</p>
       <p className={"mt-2 text-lg font-bold leading-tight " + valueClass}>{value}</p>
-    </section>
+      {hint ? <p className="mt-2 text-sm text-ink/55">{hint}</p> : null}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button className="rounded-lg border border-ink/10 bg-white p-4 text-left shadow-soft" onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+
+  return <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">{content}</section>;
 }
 
 export function SmallMetric({ label, value, className = "" }: { label: string; value: string; className?: string }) {
@@ -54,24 +77,29 @@ export function Field({
   value,
   onChange,
   type = "text",
-  placeholder
+  placeholder,
+  trailing
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   placeholder?: string;
+  trailing?: ReactNode;
 }) {
   return (
     <label className="block">
       <span className="text-sm font-semibold">{label}</span>
-      <input
-        className="mt-1 w-full rounded-md border border-ink/15 px-3 py-3 outline-none focus:border-mint"
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-      />
+      <div className="relative mt-1">
+        <input
+          className={"w-full rounded-md border border-ink/15 px-3 py-3 outline-none focus:border-mint " + (trailing ? "pr-10" : "")}
+          type={type}
+          value={value}
+          placeholder={placeholder}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        {trailing ? <div className="absolute inset-y-0 right-2 flex items-center">{trailing}</div> : null}
+      </div>
     </label>
   );
 }
