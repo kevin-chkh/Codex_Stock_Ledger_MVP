@@ -91,8 +91,11 @@ export type Position = {
   industry: string;
   tags: string[];
   quantity: number;
+  holding_cost: number;
   average_cost: number;
   remaining_cost: number;
+  paid_fee: number;
+  paid_tax: number;
   realized_profit: number;
   current_price: number;
   price_updated_at: string | null;
