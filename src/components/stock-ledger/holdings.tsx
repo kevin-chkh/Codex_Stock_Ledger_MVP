@@ -2,7 +2,7 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Position } from "@/lib/types";
-import { ListSection, SmallMetric } from "./ui";
+import { ListSection } from "./ui";
 
 export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit: (position: Position) => void }) {
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
@@ -10,6 +10,13 @@ export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit:
   const [tagFilter, setTagFilter] = useState("all");
   const [industryFilter, setIndustryFilter] = useState("all");
   const [sortBy, setSortBy] = useState<"marketValue" | "returnRate" | "profit" | "symbol">("marketValue");
+  const feeSummary = useMemo(
+    () => ({
+      fee: openPositions.reduce((sum, position) => sum + position.paid_fee, 0),
+      tax: openPositions.reduce((sum, position) => sum + position.paid_tax, 0)
+    }),
+    [openPositions]
+  );
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
     openPositions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
@@ -74,32 +81,76 @@ export function Holdings({ positions, onEdit }: { positions: Position[]; onEdit:
           </select>
         </div>
       </section>
+      <section className="rounded-lg border border-ink/10 bg-white px-4 py-3 shadow-soft">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold">累計費用</p>
+            <p className="mt-1 text-xs text-ink/50">持股相關已發生成本</p>
+          </div>
+          <div className="text-right text-sm">
+            <p>
+              <span className="text-ink/55">手續費 </span>
+              <strong>{currency(feeSummary.fee)}</strong>
+            </p>
+            <p className="mt-1">
+              <span className="text-ink/55">交易稅 </span>
+              <strong>{currency(feeSummary.tax)}</strong>
+            </p>
+          </div>
+        </div>
+      </section>
       <ListSection title={"持股 " + filteredPositions.length + " 檔"} empty={openPositions.length ? "沒有符合條件的持股" : "尚無持股"}>
         {filteredPositions.map((position) => (
           <article key={position.stock_id} className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="font-bold">{position.symbol + " " + position.name}</h3>
+                <p className="mt-1 text-xs text-ink/50">
+                  {position.quantity + " 股" + (position.industry ? " · " + position.industry : "")}
+                </p>
               </div>
               <button className="rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onEdit(position)}>
                 調整
               </button>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-              <SmallMetric label="持有成本" value={currency(position.remaining_cost)} />
-              <SmallMetric label="每股均價" value={decimal(position.average_cost, 1)} />
-              <SmallMetric label="市值" value={currency(position.market_value)} />
-              <SmallMetric label="預估損益" value={currency(position.unrealized_profit)} className={profitClass(position.unrealized_profit)} />
-              <SmallMetric label="報酬率" value={percent(position.unrealized_return_rate)} className={profitClass(position.unrealized_profit)} />
+            <div className="mt-4 rounded-md bg-paper p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs text-ink/55">持有成本(含手續費)</p>
+                  <p className="mt-1 font-bold">{currency(position.holding_cost)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-ink/55">市值</p>
+                  <p className="mt-1 font-bold">{currency(position.market_value)}</p>
+                </div>
+              </div>
             </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              <span className="rounded-full bg-mint/10 px-2 py-1 text-mint">{position.industry}</span>
-              {position.tags.map((tag) => (
-                <span key={tag} className="rounded-full bg-gold/15 px-2 py-1 text-ink/70">
-                  {tag}
-                </span>
-              ))}
+            <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-md bg-paper p-3">
+                <p className="text-xs text-ink/55">每股均價</p>
+                <p className="mt-1 font-bold">{decimal(position.average_cost, 1)}</p>
+              </div>
+              <div className="rounded-md bg-paper p-3">
+                <p className="text-xs text-ink/55">報酬率</p>
+                <p className={"mt-1 font-bold " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
+              </div>
+              <div className="col-span-2 rounded-md bg-paper p-3">
+                <p className="text-xs text-ink/55">預估損益</p>
+                <p className={"mt-1 font-bold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
+              </div>
             </div>
+            {position.realized_profit !== 0 ? (
+              <p className={"mt-3 text-xs " + profitClass(position.realized_profit)}>{"已實現損益 " + currency(position.realized_profit)}</p>
+            ) : null}
+            {position.tags.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                {position.tags.map((tag) => (
+                  <span key={tag} className="rounded-full bg-gold/15 px-2 py-1 text-ink/70">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </article>
         ))}
       </ListSection>

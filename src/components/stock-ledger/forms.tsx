@@ -1,6 +1,6 @@
 import { Download, Upload, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { calculateTradeAmounts } from "@/lib/calculations";
+import { calculateTradeAmounts, resolveUnitPriceFromTotalAmount } from "@/lib/calculations";
 import { currency, decimal, profitClass } from "@/lib/format";
 import { findStockByName, findStockBySymbol, fuzzySearchStocks, type StockCatalogItem } from "@/lib/stock-lookup";
 import type { CashMovementType, Portfolio, Position, Stock, TradeType, UserSettings } from "@/lib/types";
@@ -115,9 +115,14 @@ export function TradeForm({
     }));
   };
   const resolvedUnitPrice =
-    draft.type === "buy" && draft.buyMode === "totalAmount"
+    draft.buyMode === "totalAmount"
       ? Number(draft.quantity || 0) > 0
-        ? Number(draft.totalAmount || 0) / Number(draft.quantity || 0)
+        ? resolveUnitPriceFromTotalAmount({
+            type: draft.type,
+            quantity: Number(draft.quantity || 0),
+            totalAmount: Number(draft.totalAmount || 0),
+            settings
+          })
         : 0
       : Number(draft.unitPrice || 0);
   const preview = calculateTradeAmounts({
@@ -143,22 +148,19 @@ export function TradeForm({
         onChange={(type) =>
           setDraft((value) => ({
             ...value,
-            type: type as TradeType,
-            buyMode: type === "buy" ? value.buyMode : "unitPrice"
+            type: type as TradeType
           }))
         }
         options={[["buy", "買入"], ["sell", "賣出"]]}
       />
-      {draft.type === "buy" && (
-        <Segmented
-          value={draft.buyMode}
-          onChange={(buyMode) => setDraft((value) => ({ ...value, buyMode: buyMode as "unitPrice" | "totalAmount" }))}
-          options={[
-            ["unitPrice", "輸入單價"],
-            ["totalAmount", "輸入總額"]
-          ]}
-        />
-      )}
+      <Segmented
+        value={draft.buyMode}
+        onChange={(buyMode) => setDraft((value) => ({ ...value, buyMode: buyMode as "unitPrice" | "totalAmount" }))}
+        options={[
+          ["unitPrice", "輸入單價"],
+          ["totalAmount", "輸入總額"]
+        ]}
+      />
       <Select value={selectedPortfolioId} onChange={(portfolioId) => setDraft((value) => ({ ...value, portfolioId }))} options={portfolios.map((item) => [item.id, item.name])} />
       <div className="relative">
         <Field
@@ -196,12 +198,17 @@ export function TradeForm({
         )}
       </div>
       <Field label="股數" type="number" value={draft.quantity} onChange={(quantity) => setDraft((value) => ({ ...value, quantity }))} />
-      {draft.type === "buy" && draft.buyMode === "totalAmount" ? (
+      {draft.buyMode === "totalAmount" ? (
         <>
-          <Field label="買入金額" type="number" value={draft.totalAmount} onChange={(totalAmount) => setDraft((value) => ({ ...value, totalAmount }))} />
+          <Field
+            label={draft.type === "buy" ? "買入總成本(含手續費)" : "賣出金額"}
+            type="number"
+            value={draft.totalAmount}
+            onChange={(totalAmount) => setDraft((value) => ({ ...value, totalAmount }))}
+          />
           <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
             <div className="flex justify-between">
-              <span className="text-ink/60">自動計算均價</span>
+              <span className="text-ink/60">自動計算每股價格</span>
               <strong>{decimal(resolvedUnitPrice, 2)}</strong>
             </div>
           </section>

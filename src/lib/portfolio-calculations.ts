@@ -37,6 +37,32 @@ export function calculateTradeAmounts(input: {
   return { grossAmount, fee, tax, netAmount };
 }
 
+export function resolveUnitPriceFromTotalAmount(input: {
+  type: "buy" | "sell";
+  quantity: number;
+  totalAmount: number;
+  settings: Pick<UserSettings, "fee_rate" | "tax_rate" | "minimum_fee">;
+}) {
+  if (input.quantity <= 0 || input.totalAmount <= 0) return 0;
+
+  if (input.type === "sell") {
+    return roundMoney(input.totalAmount / input.quantity);
+  }
+
+  let grossAmount = roundMoney(input.totalAmount);
+  for (let index = 0; index < 6; index += 1) {
+    const fee = calculateFee(grossAmount, input.settings);
+    const nextGrossAmount = roundMoney(Math.max(input.totalAmount - fee, 0));
+    if (Math.abs(nextGrossAmount - grossAmount) < 0.01) {
+      grossAmount = nextGrossAmount;
+      break;
+    }
+    grossAmount = nextGrossAmount;
+  }
+
+  return roundMoney(grossAmount / input.quantity);
+}
+
 export function compareTradesChronologically(a: Trade, b: Trade) {
   const dateDiff = new Date(a.traded_at).getTime() - new Date(b.traded_at).getTime();
   if (dateDiff) return dateDiff;
@@ -68,6 +94,9 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
       stock_id: string;
       quantity: number;
       remaining_cost: number;
+      remaining_principal: number;
+      paid_fee: number;
+      paid_tax: number;
       realized_profit: number;
     }
   >();
@@ -81,17 +110,28 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
         stock_id: trade.stock_id,
         quantity: 0,
         remaining_cost: 0,
+        remaining_principal: 0,
+        paid_fee: 0,
+        paid_tax: 0,
         realized_profit: 0
       };
 
     if (trade.type === "buy") {
       draft.quantity = roundMoney(draft.quantity + trade.quantity);
       draft.remaining_cost = roundMoney(draft.remaining_cost + trade.net_amount);
+      draft.remaining_principal = roundMoney(draft.remaining_principal + trade.gross_amount);
+      draft.paid_fee = roundMoney(draft.paid_fee + trade.fee);
+      draft.paid_tax = roundMoney(draft.paid_tax + trade.tax);
     } else {
       const averageCost = draft.quantity > 0 ? draft.remaining_cost / draft.quantity : 0;
+      const averagePrincipal = draft.quantity > 0 ? draft.remaining_principal / draft.quantity : 0;
       const soldCost = roundMoney(averageCost * trade.quantity);
+      const soldPrincipal = roundMoney(averagePrincipal * trade.quantity);
       draft.quantity = roundMoney(draft.quantity - trade.quantity);
       draft.remaining_cost = roundMoney(draft.remaining_cost - soldCost);
+      draft.remaining_principal = roundMoney(draft.remaining_principal - soldPrincipal);
+      draft.paid_fee = roundMoney(draft.paid_fee + trade.fee);
+      draft.paid_tax = roundMoney(draft.paid_tax + trade.tax);
       draft.realized_profit = roundMoney(draft.realized_profit + trade.net_amount - soldCost);
     }
 
@@ -106,6 +146,9 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
       stock_id: adjustment.stock_id,
       quantity: adjustment.adjusted_quantity,
       remaining_cost: adjustment.adjusted_cost,
+      remaining_principal: adjustment.adjusted_cost,
+      paid_fee: 0,
+      paid_tax: 0,
       realized_profit: 0
     });
   }
@@ -124,10 +167,11 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
       const currentPrice = stock?.current_price ?? 0;
       const openQuantity = Math.max(roundMoney(adjustment?.adjusted_quantity ?? draft.quantity), 0);
       const openCost = Math.max(roundMoney(adjustment?.adjusted_cost ?? draft.remaining_cost), 0);
+      const openPrincipal = Math.max(roundMoney(adjustment ? adjustment.adjusted_cost : draft.remaining_principal), 0);
       const marketValue = roundMoney(openQuantity * currentPrice);
       const unrealizedProfit = roundMoney(marketValue - openCost);
       const totalProfit = roundMoney(draft.realized_profit + unrealizedProfit);
-      const averageCost = openQuantity > 0 ? roundMoney(openCost / openQuantity) : 0;
+      const averageCost = openQuantity > 0 ? roundMoney(openPrincipal / openQuantity) : 0;
 
       return {
         portfolio_id: draft.portfolio_id,
@@ -137,8 +181,11 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
         industry: stock?.industry || "未分類",
         tags: tagsByStockId.get(draft.stock_id) ?? [],
         quantity: openQuantity,
+        holding_cost: openCost,
         average_cost: averageCost,
         remaining_cost: openCost,
+        paid_fee: roundMoney(draft.paid_fee),
+        paid_tax: roundMoney(draft.paid_tax),
         realized_profit: roundMoney(draft.realized_profit),
         current_price: currentPrice,
         price_updated_at: stock?.price_updated_at ?? null,
@@ -166,7 +213,7 @@ export function validateSellQuantity(trades: Trade[], stockId: string, portfolio
 
 export function calculateDashboardMetrics(portfolios: Portfolio[], positions: Position[]): DashboardMetrics {
   const cash = roundMoney(portfolios.reduce((sum, portfolio) => sum + portfolio.cash_balance, 0));
-  const holdingCost = roundMoney(positions.reduce((sum, position) => sum + position.remaining_cost, 0));
+  const holdingCost = roundMoney(positions.reduce((sum, position) => sum + position.holding_cost, 0));
   const holdingsValue = roundMoney(positions.reduce((sum, position) => sum + position.market_value, 0));
   const realizedProfit = roundMoney(positions.reduce((sum, position) => sum + position.realized_profit, 0));
   const unrealizedProfit = roundMoney(positions.reduce((sum, position) => sum + position.unrealized_profit, 0));

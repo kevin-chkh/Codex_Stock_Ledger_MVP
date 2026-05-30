@@ -29,7 +29,7 @@ export function Dashboard({
   const [detailMode, setDetailMode] = useState<"realized" | "unrealized" | null>(null);
   const topPositions = positions
     .filter((position) => position.quantity > 0)
-    .sort((a, b) => b.market_value - a.market_value)
+    .sort((a, b) => b.holding_cost - a.holding_cost)
     .slice(0, 4);
   const recentTrades = trades.slice(0, 5);
   const stockMap = new Map(stocks.map((stock) => [stock.id, stock]));
@@ -161,7 +161,7 @@ export function Dashboard({
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate font-semibold">{position.symbol + " " + position.name}</p>
-                <p className="mt-1 truncate text-sm text-ink/55">{"均價 " + currency(position.average_cost) + " · " + position.industry}</p>
+                <p className="mt-1 truncate text-sm text-ink/55">{"均價 " + currency(position.average_cost) + " · 成本 " + currency(position.holding_cost)}</p>
               </div>
               <div className="shrink-0 text-right">
                 <p className="text-sm font-bold">{currency(position.market_value)}</p>

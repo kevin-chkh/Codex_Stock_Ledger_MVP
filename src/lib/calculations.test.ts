@@ -4,6 +4,7 @@ import {
   calculateDashboardMetrics,
   calculateTradeAmounts,
   DEFAULT_SETTINGS,
+  resolveUnitPriceFromTotalAmount,
   validateSellQuantity
 } from "./calculations";
 import type { Portfolio, PositionAdjustment, Stock, Trade } from "./types";
@@ -77,6 +78,28 @@ describe("calculateTradeAmounts", () => {
       netAmount: 9960
     });
   });
+
+  it("derives buy unit price from total amount including fee", () => {
+    expect(
+      resolveUnitPriceFromTotalAmount({
+        type: "buy",
+        quantity: 100,
+        totalAmount: 10014.25,
+        settings: DEFAULT_SETTINGS
+      })
+    ).toBe(100);
+  });
+
+  it("keeps sell total amount mode as gross amount", () => {
+    expect(
+      resolveUnitPriceFromTotalAmount({
+        type: "sell",
+        quantity: 100,
+        totalAmount: 10000,
+        settings: DEFAULT_SETTINGS
+      })
+    ).toBe(100);
+  });
 });
 
 describe("buildPositions", () => {
@@ -91,7 +114,10 @@ describe("buildPositions", () => {
     );
 
     expect(positions[0].quantity).toBe(150);
-    expect(positions[0].average_cost).toBe(110.2);
+    expect(positions[0].holding_cost).toBe(16530);
+    expect(positions[0].average_cost).toBe(110);
+    expect(positions[0].paid_fee).toBe(60);
+    expect(positions[0].paid_tax).toBe(19.5);
     expect(positions[0].realized_profit).toBe(950.5);
     expect(positions[0].unrealized_profit).toBe(-30);
     expect(positions[0].price_updated_at).toBeNull();
@@ -114,8 +140,17 @@ describe("buildPositions", () => {
     const positions = buildPositions([trade({ quantity: 100, net_amount: 10014.25 })], [stock], [], adjustments);
 
     expect(positions[0].quantity).toBe(80);
+    expect(positions[0].holding_cost).toBe(8640);
     expect(positions[0].remaining_cost).toBe(8640);
     expect(positions[0].average_cost).toBe(108);
+  });
+
+  it("includes buy fees in holding cost while keeping average cost fee-free", () => {
+    const positions = buildPositions([trade({ quantity: 100, gross_amount: 10000, fee: 14.25, net_amount: 10014.25 })], [stock]);
+
+    expect(positions[0].holding_cost).toBe(10014.25);
+    expect(positions[0].remaining_cost).toBe(10014.25);
+    expect(positions[0].average_cost).toBe(100);
   });
 
   it("rejects selling more than current holdings", () => {

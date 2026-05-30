@@ -18,7 +18,7 @@ import {
   X
 } from "lucide-react";
 import { z } from "zod";
-import { calculateDashboardMetrics, calculateTradeAmounts, DEFAULT_SETTINGS, buildPositions } from "@/lib/calculations";
+import { calculateDashboardMetrics, calculateTradeAmounts, DEFAULT_SETTINGS, buildPositions, resolveUnitPriceFromTotalAmount } from "@/lib/calculations";
 import { parseCsv } from "@/lib/csv";
 import { currency, parseTags, profitClass } from "@/lib/format";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
@@ -568,9 +568,14 @@ export default function StockLedgerApp() {
   async function saveTrade() {
     setFormError("");
     const derivedUnitPrice =
-      tradeDraft.type === "buy" && tradeDraft.buyMode === "totalAmount"
+      tradeDraft.buyMode === "totalAmount"
         ? Number(tradeDraft.quantity || 0) > 0
-          ? Number(tradeDraft.totalAmount || 0) / Number(tradeDraft.quantity || 0)
+          ? resolveUnitPriceFromTotalAmount({
+              type: tradeDraft.type,
+              quantity: Number(tradeDraft.quantity || 0),
+              totalAmount: Number(tradeDraft.totalAmount || 0),
+              settings
+            })
           : 0
         : Number(tradeDraft.unitPrice || 0);
     const parsed = tradeSchema.safeParse({
@@ -579,8 +584,8 @@ export default function StockLedgerApp() {
       unitPrice: derivedUnitPrice
     });
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
-    if (tradeDraft.type === "buy" && tradeDraft.buyMode === "totalAmount" && Number(tradeDraft.totalAmount || 0) <= 0) {
-      return setFormError("買入金額需大於 0");
+    if (tradeDraft.buyMode === "totalAmount" && Number(tradeDraft.totalAmount || 0) <= 0) {
+      return setFormError((tradeDraft.type === "buy" ? "買入" : "賣出") + "金額需大於 0");
     }
     const portfolio = portfolios.find((item) => item.id === parsed.data.portfolioId);
     if (!portfolio) return setFormError("找不到帳本");
@@ -764,7 +769,7 @@ export default function StockLedgerApp() {
       name: stock?.name ?? "",
       quantity: String(trade.quantity),
       unitPrice: String(trade.unit_price),
-      totalAmount: String(trade.gross_amount),
+      totalAmount: String(trade.type === "buy" ? trade.net_amount : trade.gross_amount),
       industry: stock?.industry ?? "",
       tags: stockTags
         .filter((tag) => tag.stock_id === trade.stock_id)
@@ -1132,7 +1137,7 @@ export default function StockLedgerApp() {
                 portfolioId: position.portfolio_id,
                 currentPrice: String(position.current_price),
                 quantity: String(adjustment?.adjusted_quantity ?? position.quantity),
-                holdingCost: String(adjustment?.adjusted_cost ?? position.remaining_cost),
+                holdingCost: String(adjustment?.adjusted_cost ?? position.holding_cost),
                 industry: position.industry === "未分類" ? "" : position.industry,
                 tags: position.tags.join(", ")
               });
