@@ -4,10 +4,17 @@ import { currency } from "@/lib/format";
 import type { Portfolio, Stock, Trade, TradeType } from "@/lib/types";
 import { ListSection } from "./ui";
 
+type CsvImportSummary = {
+  totalRows: number;
+  importedCount: number;
+  skipped: { line: number; reason: string; raw: string[] }[];
+};
+
 export function Trades({
   trades,
   stocks,
   portfolios,
+  importSummary,
   onEdit,
   onDelete,
   onImportCsv
@@ -15,6 +22,7 @@ export function Trades({
   trades: Trade[];
   stocks: Stock[];
   portfolios: Portfolio[];
+  importSummary: CsvImportSummary | null;
   onEdit: (trade: Trade) => void;
   onDelete: (trade: Trade) => void;
   onImportCsv: (file: File) => void;
@@ -98,6 +106,9 @@ export function Trades({
             <Download size={17} />
             匯出 CSV
           </button>
+          <button className="col-span-2 rounded-md border border-ink/15 px-3 py-2 text-sm font-semibold" onClick={downloadCsvTemplate}>
+            下載匯入範本
+          </button>
           <label className="col-span-2 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-sm font-semibold">
             <Upload size={17} />
             匯入 CSV
@@ -113,7 +124,36 @@ export function Trades({
             />
           </label>
         </div>
+        <div className="mt-3 rounded-md bg-paper px-3 py-3 text-xs leading-6 text-ink/60">
+          <p className="font-semibold text-ink/75">匯入格式</p>
+          <p>必填：日期、帳本、買賣、股票代號、股票名稱、股數、成交單價</p>
+          <p>可選：產業別</p>
+          <p>注意：帳本名稱必須和系統中的帳本完全一致；手續費與交易稅會依目前設定重新計算。</p>
+        </div>
       </section>
+      {importSummary ? (
+        <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">最近一次匯入結果</p>
+              <p className="mt-1 text-xs text-ink/55">
+                {"共 " + importSummary.totalRows + " 筆，成功 " + importSummary.importedCount + " 筆，跳過 " + importSummary.skipped.length + " 筆"}
+              </p>
+            </div>
+          </div>
+          {importSummary.skipped.length > 0 ? (
+            <div className="mt-3 space-y-2 text-xs text-ink/65">
+              {importSummary.skipped.slice(0, 8).map((item) => (
+                <div key={item.line} className="rounded-md bg-paper px-3 py-2">
+                  <p className="font-medium text-ink/75">{"第 " + item.line + " 列： " + item.reason}</p>
+                  <p className="mt-1 truncate">{item.raw.join(" | ")}</p>
+                </div>
+              ))}
+              {importSummary.skipped.length > 8 ? <p className="text-ink/45">{"其餘 " + (importSummary.skipped.length - 8) + " 筆已省略顯示。"}</p> : null}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
       <ListSection title={"交易紀錄 " + filteredTrades.length + " 筆"} empty={trades.length ? "沒有符合條件的交易" : "尚無交易"}>
         {filteredTrades.map((trade) => {
           const stock = stockMap.get(trade.stock_id);
@@ -136,7 +176,7 @@ export function Trades({
 }
 
 function exportTradesCsv(trades: Trade[], stockMap: Map<string, Stock>, portfolioMap: Map<string, string>) {
-  const headers = ["日期", "帳本", "買賣", "股票代號", "股票名稱", "股數", "成交單價", "成交金額", "手續費", "交易稅", "淨額"];
+  const headers = ["日期", "帳本", "買賣", "股票代號", "股票名稱", "股數", "成交單價", "產業別", "成交金額", "手續費", "交易稅", "淨額"];
   const rows = trades.map((trade) => {
     const stock = stockMap.get(trade.stock_id);
     return [
@@ -147,6 +187,7 @@ function exportTradesCsv(trades: Trade[], stockMap: Map<string, Stock>, portfoli
       stock?.name ?? "",
       trade.quantity,
       trade.unit_price,
+      stock?.industry ?? "",
       trade.gross_amount,
       trade.fee,
       trade.tax,
@@ -154,12 +195,29 @@ function exportTradesCsv(trades: Trade[], stockMap: Map<string, Stock>, portfoli
     ];
   });
   const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+  triggerCsvDownload(csv, "stock-ledger-trades.csv");
+}
+
+function downloadCsvTemplate() {
+  const headers = ["日期", "帳本", "買賣", "股票代號", "股票名稱", "股數", "成交單價", "產業別"];
+  const rows = [
+    ["2026-05-30", "台股主帳本", "買入", "2330", "台積電", "100", "920", "半導體"],
+    ["2026-05-30", "台股主帳本", "賣出", "2330", "台積電", "20", "950", "半導體"]
+  ];
+  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+  triggerCsvDownload(csv, "stock-ledger-import-template.csv");
+}
+
+function triggerCsvDownload(csv: string, filename: string) {
   const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "stock-ledger-trades.csv";
+  link.download = filename;
+  link.style.display = "none";
+  document.body.appendChild(link);
   link.click();
+  document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
 

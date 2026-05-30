@@ -66,6 +66,12 @@ type QuotePayload = {
   failedSymbols: string[];
 };
 
+type CsvImportSummary = {
+  totalRows: number;
+  importedCount: number;
+  skipped: { line: number; reason: string; raw: string[] }[];
+};
+
 const LOCAL_STORAGE_KEY = "stock-ledger-local-v1";
 
 const tradeSchema = z.object({
@@ -178,6 +184,7 @@ export default function StockLedgerApp() {
   const [portfolioDraft, setPortfolioDraft] = useState({ name: "", initialAmount: "", note: "" });
   const [cashDraft, setCashDraft] = useState({ portfolioId: "", type: "deposit" as CashMovementType, amount: "", note: "" });
   const [stockDraft, setStockDraft] = useState({ stockId: "", portfolioId: "", currentPrice: "", quantity: "", holdingCost: "", industry: "", tags: "" });
+  const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
 
   const positions = useMemo(() => buildPositions(trades, stocks, stockTags, positionAdjustments), [trades, stocks, stockTags, positionAdjustments]);
   const catalogBySymbol = useMemo(() => new Map(stockCatalog.map((item) => [item.symbol, item])), [stockCatalog]);
@@ -921,6 +928,7 @@ export default function StockLedgerApp() {
 
   async function importTradesCsv(file: File) {
     setFormError("");
+    setCsvImportSummary(null);
     try {
       const text = await file.text();
       const rows = parseCsv(text);
@@ -932,27 +940,38 @@ export default function StockLedgerApp() {
       if (missing.length) return setFormError("CSV 欄位缺少：" + missing.join("、"));
 
       const headerIndex = new Map(header.map((name, index) => [name, index]));
-      const parsedRows = rows.slice(1).filter((row) => row.some((cell) => cell.trim())).map((row) => ({
-        tradedAt: row[headerIndex.get("日期") ?? -1] || today(),
-        portfolioName: row[headerIndex.get("帳本") ?? -1] || "",
-        type: row[headerIndex.get("買賣") ?? -1] || "",
-        symbol: (row[headerIndex.get("股票代號") ?? -1] || "").trim(),
-        name: (row[headerIndex.get("股票名稱") ?? -1] || "").trim(),
-        quantity: Number((row[headerIndex.get("股數") ?? -1] || "").replace(/,/g, "")),
-        unitPrice: Number((row[headerIndex.get("成交單價") ?? -1] || "").replace(/,/g, "")),
-        industry: (row[headerIndex.get("產業別") ?? -1] || "").trim()
-      }));
+      const parsedRows = rows
+        .slice(1)
+        .map((row, index) => ({ row, line: index + 2 }))
+        .filter(({ row }) => row.some((cell) => cell.trim()))
+        .map(({ row, line }) => ({
+          line,
+          raw: row,
+          tradedAt: row[headerIndex.get("日期") ?? -1] || today(),
+          portfolioName: row[headerIndex.get("帳本") ?? -1] || "",
+          type: row[headerIndex.get("買賣") ?? -1] || "",
+          symbol: (row[headerIndex.get("股票代號") ?? -1] || "").trim(),
+          name: (row[headerIndex.get("股票名稱") ?? -1] || "").trim(),
+          quantity: Number((row[headerIndex.get("股數") ?? -1] || "").replace(/,/g, "")),
+          unitPrice: Number((row[headerIndex.get("成交單價") ?? -1] || "").replace(/,/g, "")),
+          industry: (row[headerIndex.get("產業別") ?? -1] || "").trim()
+        }));
 
       let nextPortfolios = [...portfolios];
       let nextStocks = [...stocks];
       let nextTrades = [...trades];
+      const skipped: CsvImportSummary["skipped"] = [];
 
       for (const row of parsedRows) {
         if (!row.portfolioName || !row.symbol || !row.name || !Number.isFinite(row.quantity) || !Number.isFinite(row.unitPrice) || row.quantity <= 0 || row.unitPrice <= 0) {
+          skipped.push({ line: row.line, reason: "欄位缺漏或數值格式錯誤", raw: row.raw });
           continue;
         }
         const portfolio = nextPortfolios.find((item) => item.name === row.portfolioName);
-        if (!portfolio) continue;
+        if (!portfolio) {
+          skipped.push({ line: row.line, reason: "找不到對應帳本名稱", raw: row.raw });
+          continue;
+        }
         const tradeType: TradeType = row.type.includes("賣") ? "sell" : "buy";
 
         let stock = nextStocks.find((item) => item.symbol === row.symbol);
@@ -988,10 +1007,16 @@ export default function StockLedgerApp() {
         });
 
         const candidateTrades = [trade, ...nextTrades];
-        if (hasOversoldPosition(candidateTrades, { portfolioId: portfolio.id, stockId: stock.id })) continue;
+        if (hasOversoldPosition(candidateTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
+          skipped.push({ line: row.line, reason: "賣出股數超過可持有數量", raw: row.raw });
+          continue;
+        }
         if (tradeType === "buy" && !settings.allow_negative_cash) {
           const currentPortfolio = nextPortfolios.find((item) => item.id === portfolio.id);
-          if (!currentPortfolio || currentPortfolio.cash_balance < trade.net_amount) continue;
+          if (!currentPortfolio || currentPortfolio.cash_balance < trade.net_amount) {
+            skipped.push({ line: row.line, reason: "帳本現金不足，買入交易未匯入", raw: row.raw });
+            continue;
+          }
         }
 
         nextTrades = candidateTrades;
@@ -1015,7 +1040,13 @@ export default function StockLedgerApp() {
       setStocks(nextStocks);
       setTrades(nextTrades);
       setPortfolios(nextPortfolios);
-      setMessage("CSV 匯入完成，新增交易 " + (nextTrades.length - trades.length) + " 筆。");
+      const importedCount = nextTrades.length - trades.length;
+      setCsvImportSummary({
+        totalRows: parsedRows.length,
+        importedCount,
+        skipped
+      });
+      setMessage("CSV 匯入完成，成功 " + importedCount + " 筆，跳過 " + skipped.length + " 筆。");
     } catch (error) {
       console.error("Failed to import CSV", error);
       setFormError("CSV 解析失敗，請確認格式與欄位。");
@@ -1126,7 +1157,17 @@ export default function StockLedgerApp() {
         {activeTab === "portfolios" && (
           <Portfolios portfolios={portfolios} cashMovements={cashMovements} onNew={() => setSheetMode("portfolio")} onCash={() => setSheetMode("cash")} />
         )}
-        {activeTab === "trades" && <Trades trades={trades} stocks={stocks} portfolios={portfolios} onEdit={openEditTrade} onDelete={deleteTrade} onImportCsv={importTradesCsv} />}
+        {activeTab === "trades" && (
+          <Trades
+            trades={trades}
+            stocks={stocks}
+            portfolios={portfolios}
+            importSummary={csvImportSummary}
+            onEdit={openEditTrade}
+            onDelete={deleteTrade}
+            onImportCsv={importTradesCsv}
+          />
+        )}
         {activeTab === "holdings" && (
           <Holdings
             positions={positions}
@@ -1145,7 +1186,7 @@ export default function StockLedgerApp() {
             }}
           />
         )}
-        {activeTab === "analytics" && <Analytics positions={positions} />}
+        {activeTab === "analytics" && <Analytics positions={positions} trades={trades} />}
       </section>
 
       <button
