@@ -1512,7 +1512,7 @@ export default function StockLedgerApp() {
       {confirmState?.kind === "importCsv" && (
         <ConfirmSheet
           title="匯入 CSV"
-          body={`檔案：${confirmState.file.name}。資料筆數：${confirmState.totalRows} 筆。確認後會開始匯入交易資料，並依目前設定重新計算手續費、交易稅與帳本現金。`}
+          body={`檔案：${confirmState.file.name}。資料筆數：${confirmState.totalRows} 筆。確認後會開始匯入交易資料，並依目前費率重新計算手續費、交易稅與帳本現金。`}
           confirmLabel="確認匯入"
           tone="primary"
           onCancel={() => setConfirmState(null)}
