@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, LayoutGrid, List, Search } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, LayoutGrid, List, Search, Upload } from "lucide-react";
 import { useMemo, useState } from "react";
 import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Portfolio, Position } from "@/lib/types";
@@ -9,13 +9,15 @@ export function Holdings({
   portfolios,
   selectedPortfolioId,
   onPortfolioChange,
-  onAdjustCost
+  onAdjustCost,
+  onImportCsv
 }: {
   positions: Position[];
   portfolios: Portfolio[];
   selectedPortfolioId: string;
   onPortfolioChange: (portfolioId: string) => void;
   onAdjustCost: (position: Position) => void;
+  onImportCsv: (file: File) => void;
 }) {
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
   const [query, setQuery] = useState("");
@@ -105,6 +107,32 @@ export function Holdings({
             <option value="profit">未實現損益高到低</option>
             <option value="symbol">代號小到大</option>
           </select>
+          <button
+            className="flex items-center justify-center gap-2 rounded-md bg-ink px-3 py-2 text-sm font-semibold text-white"
+            onClick={() => exportHoldingsCsv(filteredPositions, portfolios)}
+          >
+            <Download size={17} />
+            匯出持股
+          </button>
+          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-sm font-semibold">
+            <Upload size={17} />
+            匯入持股
+            <input
+              className="hidden"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) onImportCsv(file);
+                event.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+        <div className="mt-3 rounded-md bg-paper px-3 py-3 text-xs leading-6 text-ink/60">
+          <p className="font-semibold text-ink/75">持股匯入格式</p>
+          <p>必填：帳本、股票代號、股票名稱、持有股數、持有成本</p>
+          <p>可選：目前價格、產業別、標籤。匯入會更新目前庫存校正資料，不會新增交易紀錄。</p>
         </div>
       </section>
 
@@ -173,6 +201,7 @@ export function Holdings({
                       <div className="shrink-0 text-right">
                         <p className="text-sm font-semibold">{currency(position.market_value)}</p>
                         <p className={"mt-1 text-xs " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
+                        <p className={"mt-0.5 text-xs font-semibold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
                       </div>
                     </div>
 
@@ -192,6 +221,41 @@ export function Holdings({
       </ListSection>
     </div>
   );
+}
+
+function exportHoldingsCsv(positions: Position[], portfolios: Portfolio[]) {
+  const portfolioMap = new Map(portfolios.map((portfolio) => [portfolio.id, portfolio.name]));
+  const headers = ["帳本", "股票代號", "股票名稱", "持有股數", "持有成本", "目前價格", "產業別", "標籤"];
+  const rows = positions.map((position) => [
+    portfolioMap.get(position.portfolio_id) ?? "",
+    position.symbol,
+    position.name,
+    position.quantity,
+    position.holding_cost,
+    position.current_price,
+    position.industry === "未分類" ? "" : position.industry,
+    position.tags.join(", ")
+  ]);
+  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+  triggerCsvDownload(csv, "stock-ledger-holdings.csv");
+}
+
+function triggerCsvDownload(csv: string, filename: string) {
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: string | number) {
+  const text = String(value);
+  return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
 }
 
 function ExpandedHoldingCard({
