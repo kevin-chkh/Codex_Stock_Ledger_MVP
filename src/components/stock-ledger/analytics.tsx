@@ -187,6 +187,30 @@ export function Analytics({
       }));
   }, [filteredPositions, holdingsBasisTotal, analysisBasis]);
   const etfRatio = etfEquityData.find((item) => item.name === "ETF")?.ratio ?? 0;
+  const industryDetails = useMemo(
+    () => buildDetailLookup(industryData, filteredPositions, analysisBasis, (name, position) => position.industry === name),
+    [industryData, filteredPositions, analysisBasis]
+  );
+  const tagDetails = useMemo(
+    () =>
+      buildDetailLookup(
+        tagData,
+        filteredPositions,
+        analysisBasis,
+        (name, position) => (name === "未標籤" ? position.tags.length === 0 : position.tags.includes(name))
+      ),
+    [tagData, filteredPositions, analysisBasis]
+  );
+  const etfEquityDetails = useMemo(
+    () =>
+      buildDetailLookup(
+        etfEquityData,
+        filteredPositions,
+        analysisBasis,
+        (name, position) => (name === "ETF" ? isEtfPosition(position) : !isEtfPosition(position))
+      ),
+    [etfEquityData, filteredPositions, analysisBasis]
+  );
 
   const maxGainPosition = useMemo(() => {
     if (!filteredPositions.length) return null;
@@ -422,9 +446,9 @@ export function Analytics({
         />
       </section>
 
-      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} collapsed={collapsedCards.industry ?? false} onToggle={() => toggleCard("industry")} />
-      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} collapsed={collapsedCards.tags ?? false} onToggle={() => toggleCard("tags")} />
-      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} collapsed={collapsedCards.etfEquity ?? false} onToggle={() => toggleCard("etfEquity")} />
+      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} details={industryDetails} collapsed={collapsedCards.industry ?? false} onToggle={() => toggleCard("industry")} />
+      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} details={tagDetails} collapsed={collapsedCards.tags ?? false} onToggle={() => toggleCard("tags")} />
+      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} details={etfEquityDetails} collapsed={collapsedCards.etfEquity ?? false} onToggle={() => toggleCard("etfEquity")} />
       <CollapsibleCard
         title="資產組成"
         subtitle="目前先顯示當前組成，歷史總資產趨勢即將推出。"
@@ -629,6 +653,7 @@ function ChartCard({
   data,
   empty,
   basisLabel,
+  details,
   collapsed,
   onToggle
 }: {
@@ -636,18 +661,23 @@ function ChartCard({
   data: { name: string; value: number; ratio: number }[];
   empty: string;
   basisLabel: string;
+  details: Record<string, DetailPositionRow[]>;
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const [selectedName, setSelectedName] = useState<string>(data[0]?.name ?? "");
+  const [selectedName, setSelectedName] = useState("");
   const [visibleCount, setVisibleCount] = useState(5);
 
   useEffect(() => {
-    setSelectedName(data[0]?.name ?? "");
     setVisibleCount(5);
   }, [data]);
 
-  const selectedItem = data.find((item) => item.name === selectedName) ?? data[0];
+  const selectedItem = data.find((item) => item.name === selectedName) ?? null;
+  const selectedDetails = selectedItem ? details[selectedItem.name] ?? [] : [];
+
+  function toggleSelection(name: string) {
+    setSelectedName((current) => (current === name ? "" : name));
+  }
   return (
     <CollapsibleCard
       title={title}
@@ -657,7 +687,7 @@ function ChartCard({
       summary={
         selectedItem ? (
           <div className="grid grid-cols-3 gap-2">
-            <MetricTile label="最大分類" value={selectedItem.name} />
+            <MetricTile label="已選分類" value={selectedItem.name} />
             <MetricTile label={basisLabel} value={currency(selectedItem.value)} />
             <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
           </div>
@@ -686,7 +716,7 @@ function ChartCard({
                     strokeWidth={3}
                     onClick={(_, index) => {
                       const name = data[index]?.name ?? "";
-                      if (name) setSelectedName(name);
+                      if (name) toggleSelection(name);
                     }}
                   >
                     {data.map((entry, index) => (
@@ -711,6 +741,35 @@ function ChartCard({
                 <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
                 <MetricTile label="占整體" value={percent(selectedItem.ratio)} />
               </div>
+              {selectedDetails.length ? (
+                <div className="mt-4 rounded-xl border border-ink/8 bg-paper/45 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-ink">對應持股明細</p>
+                    <p className="text-xs text-ink/45">共 {selectedDetails.length} 檔</p>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {selectedDetails.map((detail) => (
+                      <div key={detail.key} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-ink">
+                            {detail.symbol} {detail.name}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-ink/45">
+                            {detail.quantityText} · {basisLabel} {currency(detail.basisValue)}
+                          </p>
+                          <p className="mt-1 text-xs text-ink/45">
+                            占此類別 {percent(detail.ratioOfGroup)} · 占整體 {percent(detail.ratioOfPortfolio)}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-bold text-ink">{currency(detail.marketValue)}</p>
+                          <p className={"mt-1 text-xs font-semibold " + profitClass(detail.unrealizedProfit)}>{currency(detail.unrealizedProfit)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className="mt-3 space-y-2">
@@ -719,10 +778,10 @@ function ChartCard({
                 type="button"
                 className={
                   "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-sm shadow-[0_1px_0_rgba(10,10,10,0.02)] " +
-                  (selectedItem?.name === item.name ? "border-mint/20 bg-mint/5" : "border-ink/5 bg-white")
+                  (selectedName === item.name ? "border-mint/20 bg-mint/5" : "border-ink/5 bg-white")
                 }
                 key={item.name}
-                onClick={() => setSelectedName(item.name)}
+                onClick={() => toggleSelection(item.name)}
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
@@ -857,4 +916,44 @@ function isUuidLike(value: string) {
 function getPositionBasisValue(position: Position | undefined, basis: AnalysisBasis) {
   if (!position) return 0;
   return basis === "marketValue" ? position.market_value : position.holding_cost;
+}
+
+type DetailPositionRow = {
+  key: string;
+  symbol: string;
+  name: string;
+  quantityText: string;
+  basisValue: number;
+  marketValue: number;
+  unrealizedProfit: number;
+  ratioOfGroup: number;
+  ratioOfPortfolio: number;
+};
+
+function buildDetailLookup(
+  groups: { name: string }[],
+  positions: Position[],
+  basis: AnalysisBasis,
+  matcher: (name: string, position: Position) => boolean
+) {
+  const lookup: Record<string, DetailPositionRow[]> = {};
+  const portfolioBasisTotal = positions.reduce((sum, position) => sum + getPositionBasisValue(position, basis), 0);
+  for (const group of groups) {
+    const matchedPositions = positions
+      .filter((position) => matcher(group.name, position))
+      .sort((a, b) => getPositionBasisValue(b, basis) - getPositionBasisValue(a, basis));
+    const groupBasisTotal = matchedPositions.reduce((sum, position) => sum + getPositionBasisValue(position, basis), 0);
+    lookup[group.name] = matchedPositions.map((position) => ({
+      key: position.stock_id,
+      symbol: position.symbol,
+      name: position.name,
+      quantityText: `${position.quantity} 股`,
+      basisValue: getPositionBasisValue(position, basis),
+      marketValue: position.market_value,
+      unrealizedProfit: position.unrealized_profit,
+      ratioOfGroup: groupBasisTotal > 0 ? getPositionBasisValue(position, basis) / groupBasisTotal : 0,
+      ratioOfPortfolio: portfolioBasisTotal > 0 ? getPositionBasisValue(position, basis) / portfolioBasisTotal : 0
+    }));
+  }
+  return lookup;
 }
