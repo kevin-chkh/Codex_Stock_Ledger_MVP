@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { currency, percent, profitClass } from "@/lib/format";
 import { groupByValue, roundMoney } from "@/lib/calculations";
 import type { Portfolio, Position, Stock, Trade } from "@/lib/types";
-import { ListSection, PortfolioScopePicker, SmallCard } from "./ui";
+import { PortfolioScopePicker, SmallCard } from "./ui";
 
 const colors = ["#2f7d68", "#c6973f", "#c75b4d", "#4f6f9f", "#7c6a9d", "#61705f"];
 const ANALYTICS_COLLAPSE_STORAGE_KEY = "stock-ledger.analytics.collapsed";
-const COLLAPSIBLE_CARD_KEYS = ["industry", "tags", "etfEquity", "assets", "concentration", "trend", "behavior", "contribution"] as const;
+const COLLAPSIBLE_CARD_KEYS = ["industry", "tags", "etfEquity", "assets", "concentration", "trend", "contribution"] as const;
 
 type TrendWindow = "14d" | "30d";
 type ProfitMode = "realized" | "unrealized";
@@ -169,6 +169,12 @@ export function Analytics({
     holdingsBasisTotal > 0
       ? sortedPositions.slice(0, 3).reduce((sum, position) => sum + getPositionBasisValue(position, analysisBasis), 0) / holdingsBasisTotal
       : 0;
+  const concentrationStatus =
+    topThreeRatio > 0.6
+      ? { label: "集中度偏高", tone: "text-[#d45c4a]", note: "前 3 大持股占比超過 60%" }
+      : topThreeRatio >= 0.4
+        ? { label: "中等集中", tone: "text-[#c6973f]", note: "前 3 大持股占比介於 40% 到 60%" }
+        : { label: "相對分散", tone: "text-mint", note: "前 3 大持股占比低於 40%" };
 
   const etfEquityData = useMemo(() => {
     const rows = [
@@ -261,6 +267,8 @@ export function Analytics({
       mostTradedCount: mostTraded?.count ?? 0
     };
   }, [recentTrades, stocks]);
+  const trendWindowLabel = trendWindow === "14d" ? "近 2 週" : "近 1 個月";
+  const recentTradeCount = tradeBehavior.buyCount + tradeBehavior.sellCount;
 
   const allCardsCollapsed = COLLAPSIBLE_CARD_KEYS.every((key) => collapsedCards[key]);
 
@@ -424,31 +432,104 @@ export function Analytics({
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-3">
-        <SmallCard
-          label="最大單一持股"
-          value={percent(topPositionRatio)}
-          hint={sortedPositions[0] ? `${sortedPositions[0].symbol} ${sortedPositions[0].name}` : "尚無資料"}
-        />
-        <SmallCard label="前 3 大持股" value={percent(topThreeRatio)} hint="占總持股市值比例" />
-        <SmallCard label="最大產業占比" value={percent(topIndustryRatio)} hint={industryData[0]?.name ?? "尚無資料"} />
-        <SmallCard
-          label="最大獲利部位"
-          value={maxGainPosition ? currency(maxGainPosition.unrealized_profit) : "—"}
-          valueClass={maxGainPosition ? profitClass(maxGainPosition.unrealized_profit) : ""}
-          hint={maxGainPosition ? `${maxGainPosition.symbol} ${maxGainPosition.name}` : "尚無資料"}
-        />
-        <SmallCard
-          label="最大虧損部位"
-          value={maxLossPosition ? currency(maxLossPosition.unrealized_profit) : "—"}
-          valueClass={maxLossPosition ? profitClass(maxLossPosition.unrealized_profit) : ""}
-          hint={maxLossPosition ? `${maxLossPosition.symbol} ${maxLossPosition.name}` : "尚無虧損部位"}
-        />
+      <section className="space-y-3">
+        <div>
+          <h2 className="font-bold">風險集中度</h2>
+          <p className="mt-1 text-xs text-ink/50">先看部位是否集中在少數股票或產業</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <SmallCard
+            label="最大單一持股"
+            value={percent(topPositionRatio)}
+            hint={sortedPositions[0] ? `${sortedPositions[0].symbol} ${sortedPositions[0].name}` : "尚無資料"}
+          />
+          <SmallCard label="前 3 大持股" value={percent(topThreeRatio)} hint="占總持股市值比例" />
+          <SmallCard label="最大產業占比" value={percent(topIndustryRatio)} hint={industryData[0]?.name ?? "尚無資料"} />
+          <SmallCard label="集中度狀態" value={concentrationStatus.label} valueClass={concentrationStatus.tone} hint={concentrationStatus.note} />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="font-bold">損益焦點</h2>
+          <p className="mt-1 text-xs text-ink/50">快速定位目前最大貢獻與最大拖累</p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <SmallCard
+            label="最大獲利部位"
+            value={maxGainPosition ? currency(maxGainPosition.unrealized_profit) : "—"}
+            valueClass={maxGainPosition ? profitClass(maxGainPosition.unrealized_profit) : ""}
+            hint={maxGainPosition ? `${maxGainPosition.symbol} ${maxGainPosition.name}` : "尚無資料"}
+          />
+          <SmallCard
+            label="最大虧損部位"
+            value={maxLossPosition ? currency(maxLossPosition.unrealized_profit) : "—"}
+            valueClass={maxLossPosition ? profitClass(maxLossPosition.unrealized_profit) : ""}
+            hint={maxLossPosition ? `${maxLossPosition.symbol} ${maxLossPosition.name}` : "尚無虧損部位"}
+          />
+        </div>
       </section>
 
       <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} details={industryDetails} collapsed={collapsedCards.industry ?? false} onToggle={() => toggleCard("industry")} />
-      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} details={tagDetails} collapsed={collapsedCards.tags ?? false} onToggle={() => toggleCard("tags")} />
-      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} details={etfEquityDetails} collapsed={collapsedCards.etfEquity ?? false} onToggle={() => toggleCard("etfEquity")} />
+      <RatioListCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} details={tagDetails} collapsed={collapsedCards.tags ?? false} onToggle={() => toggleCard("tags")} />
+      <AllocationBarCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} details={etfEquityDetails} collapsed={collapsedCards.etfEquity ?? false} onToggle={() => toggleCard("etfEquity")} />
+      <CollapsibleCard
+        title="損益貢獻分析"
+        subtitle="依股票、產業或標籤查看目前主要的獲利與虧損來源"
+        collapsed={collapsedCards.contribution ?? false}
+        onToggle={() => toggleCard("contribution")}
+        summary={
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="模式" value={profitMode === "realized" ? "已實現" : "未實現"} />
+            <MetricTile
+              label="目前維度"
+              value={contributionGroup === "stock" ? "股票" : contributionGroup === "industry" ? "產業" : "標籤"}
+            />
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <div className="rounded-md bg-paper p-1 text-sm">
+            <button className={"rounded px-3 py-1.5 " + (profitMode === "unrealized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("unrealized")}>
+              未實現
+            </button>
+            <button className={"rounded px-3 py-1.5 " + (profitMode === "realized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("realized")}>
+              已實現
+            </button>
+          </div>
+          <div className="rounded-md bg-paper p-1 text-sm">
+            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "stock" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("stock")}>
+              股票
+            </button>
+            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "industry" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("industry")}>
+              產業
+            </button>
+            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "tag" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("tag")}>
+              標籤
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 space-y-3">
+          {contributionRows.slice(0, profitVisibleCount).map((item) => (
+            <div key={item.key} className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3">
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{item.label}</p>
+                <p className="mt-1 truncate text-sm text-ink/55">{item.subtitle}</p>
+              </div>
+              <p className={"shrink-0 text-sm font-bold " + profitClass(item.value)}>{currency(item.value)}</p>
+            </div>
+          ))}
+        </div>
+        {contributionRows.length > 5 ? (
+          <ExpandControls
+            visibleCount={Math.min(profitVisibleCount, contributionRows.length)}
+            totalCount={contributionRows.length}
+            onExpandMore={() => setProfitVisibleCount((current) => Math.min(current + 5, contributionRows.length))}
+            onExpandAll={() => setProfitVisibleCount(contributionRows.length)}
+            onCollapse={() => setProfitVisibleCount(5)}
+          />
+        ) : null}
+      </CollapsibleCard>
       <CollapsibleCard
         title="資產組成"
         subtitle="目前先顯示當前組成，歷史總資產趨勢即將推出。"
@@ -512,19 +593,24 @@ export function Analytics({
       </CollapsibleCard>
 
       <CollapsibleCard
-        title="投資趨勢"
-        subtitle="比較最近買入、賣出與淨投入變化"
+        title="近期操作"
+        subtitle="合併近期買賣金流與交易習慣，先看重點再看趨勢"
         collapsed={collapsedCards.trend ?? false}
         onToggle={() => toggleCard("trend")}
         summary={
-          <div className="grid grid-cols-3 gap-2">
-            <MetricTile label="買入" value={currency(trendSummary.buy)} />
-            <MetricTile label="賣出" value={currency(trendSummary.sell)} />
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="期間" value={trendWindowLabel} />
+            <MetricTile label="操作次數" value={`${recentTradeCount} 次`} />
             <MetricTile label="淨投入" value={currency(trendSummary.net)} valueClass={profitClass(trendSummary.net)} />
+            <MetricTile label="最常交易" value={tradeBehavior.mostTradedCount ? `${tradeBehavior.mostTradedCount} 次` : "0 次"} />
           </div>
         }
       >
-        <div className="flex items-center justify-end">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-ink">{trendWindowLabel} 操作摘要</p>
+            <p className="mt-1 text-xs text-ink/50">賣出視為現金回收，買入視為資金投入。</p>
+          </div>
           <div className="rounded-md bg-paper p-1 text-sm">
             <button className={"rounded px-3 py-1.5 " + (trendWindow === "14d" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setTrendWindow("14d")}>
               近 2 週
@@ -534,116 +620,43 @@ export function Analytics({
             </button>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-3 gap-2">
+        <div className="mt-3 grid grid-cols-2 gap-2">
           <MetricTile label="買入" value={currency(trendSummary.buy)} />
           <MetricTile label="賣出" value={currency(trendSummary.sell)} />
           <MetricTile label="淨投入" value={currency(trendSummary.net)} valueClass={profitClass(trendSummary.net)} />
+          <MetricTile label="操作次數" value={`${recentTradeCount} 次`} />
+          <MetricTile label="平均單筆買入" value={currency(tradeBehavior.avgBuyAmount)} />
+          <MetricTile label="買 / 賣次數" value={`${tradeBehavior.buyCount} / ${tradeBehavior.sellCount}`} />
+        </div>
+        <div className="mt-3 rounded-md bg-paper px-3 py-3">
+          <p className="text-xs text-ink/55">最常交易標的</p>
+          <p className="mt-1 text-sm font-semibold">{tradeBehavior.mostTradedLabel}</p>
         </div>
         {trendData.length ? (
-          <div className="mt-4 h-64">
+          <div className="mt-4 rounded-xl bg-paper/45 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-ink">每日淨投入</p>
+              <p className="text-xs text-ink/45">只顯示淨額，降低買賣柱混雜</p>
+            </div>
+            <div className="mt-3 h-52">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={trendData} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5dfd0" />
+              <BarChart data={trendData} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
                 <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6f685c" }} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={(value) => compactCurrency(Number(value))} tick={{ fontSize: 11, fill: "#6f685c" }} axisLine={false} tickLine={false} />
-                <Tooltip formatter={(value: number) => currency(Number(value))} />
-                <Bar dataKey="buy" name="買入" fill="#d45c4a" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="sell" name="賣出" fill="#35624d" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="net" name="淨投入" fill="#c6973f" radius={[6, 6, 0, 0]} />
+                <Tooltip formatter={(value: number) => currency(Number(value))} labelFormatter={(label) => `日期 ${label}`} />
+                <Bar dataKey="net" name="淨投入" radius={[6, 6, 0, 0]}>
+                  {trendData.map((item) => (
+                    <Cell key={item.label} fill={item.net >= 0 ? "#35624d" : "#d45c4a"} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
         ) : (
           <p className="mt-4 text-sm text-ink/55">尚無近期交易資料</p>
         )}
       </CollapsibleCard>
 
-      <CollapsibleCard
-        title="交易行為摘要"
-        subtitle="依目前時間區間彙整最近的操作密度與交易習慣"
-        collapsed={collapsedCards.behavior ?? false}
-        onToggle={() => toggleCard("behavior")}
-        summary={
-          <div className="grid grid-cols-2 gap-2">
-            <MetricTile label="買入次數" value={`${tradeBehavior.buyCount} 次`} />
-            <MetricTile label="賣出次數" value={`${tradeBehavior.sellCount} 次`} />
-            <MetricTile label="平均單筆買入" value={currency(tradeBehavior.avgBuyAmount)} />
-            <MetricTile label="最常交易標的" value={tradeBehavior.mostTradedCount ? `${tradeBehavior.mostTradedCount} 次` : "0 次"} />
-          </div>
-        }
-      >
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-ink/50">{trendWindow === "14d" ? "近 2 週" : "近 1 個月"}</p>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <MetricTile label="買入次數" value={`${tradeBehavior.buyCount} 次`} />
-          <MetricTile label="賣出次數" value={`${tradeBehavior.sellCount} 次`} />
-          <MetricTile label="平均單筆買入" value={currency(tradeBehavior.avgBuyAmount)} />
-          <MetricTile label="最常交易標的" value={tradeBehavior.mostTradedCount ? `${tradeBehavior.mostTradedCount} 次` : "0 次"} />
-        </div>
-        <div className="mt-3 rounded-md bg-paper px-3 py-3">
-          <p className="text-xs text-ink/55">最常交易標的</p>
-          <p className="mt-1 text-sm font-semibold">{tradeBehavior.mostTradedLabel}</p>
-        </div>
-      </CollapsibleCard>
-
-      <CollapsibleCard
-        title="損益貢獻分析"
-        subtitle="依股票、產業或標籤查看目前主要的獲利與虧損來源"
-        collapsed={collapsedCards.contribution ?? false}
-        onToggle={() => toggleCard("contribution")}
-        summary={
-          <div className="grid grid-cols-2 gap-2">
-            <MetricTile label="模式" value={profitMode === "realized" ? "已實現" : "未實現"} />
-            <MetricTile
-              label="目前維度"
-              value={contributionGroup === "stock" ? "股票" : contributionGroup === "industry" ? "產業" : "標籤"}
-            />
-          </div>
-        }
-      >
-        <div className="space-y-3">
-          <div className="rounded-md bg-paper p-1 text-sm">
-            <button className={"rounded px-3 py-1.5 " + (profitMode === "unrealized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("unrealized")}>
-              未實現
-            </button>
-            <button className={"rounded px-3 py-1.5 " + (profitMode === "realized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("realized")}>
-              已實現
-            </button>
-          </div>
-          <div className="rounded-md bg-paper p-1 text-sm">
-            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "stock" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("stock")}>
-              股票
-            </button>
-            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "industry" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("industry")}>
-              產業
-            </button>
-            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "tag" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("tag")}>
-              標籤
-            </button>
-          </div>
-        </div>
-        <div className="mt-3 space-y-3">
-          {contributionRows.slice(0, profitVisibleCount).map((item) => (
-            <div key={item.key} className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3">
-              <div className="min-w-0">
-                <p className="truncate font-semibold">{item.label}</p>
-                <p className="mt-1 truncate text-sm text-ink/55">{item.subtitle}</p>
-              </div>
-              <p className={"shrink-0 text-sm font-bold " + profitClass(item.value)}>{currency(item.value)}</p>
-            </div>
-          ))}
-        </div>
-        {contributionRows.length > 5 ? (
-          <ExpandControls
-            visibleCount={Math.min(profitVisibleCount, contributionRows.length)}
-            totalCount={contributionRows.length}
-            onExpandMore={() => setProfitVisibleCount((current) => Math.min(current + 5, contributionRows.length))}
-            onExpandAll={() => setProfitVisibleCount(contributionRows.length)}
-            onCollapse={() => setProfitVisibleCount(5)}
-          />
-        ) : null}
-      </CollapsibleCard>
     </div>
   );
 }
@@ -739,12 +752,12 @@ function ChartCard({
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <MetricTile label={basisLabel} value={currency(selectedItem.value)} />
                 <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
-                <MetricTile label="占整體" value={percent(selectedItem.ratio)} />
+                <MetricTile label="持股檔數" value={`${selectedDetails.length} 檔`} />
               </div>
               {selectedDetails.length ? (
                 <div className="mt-4 rounded-xl border border-ink/8 bg-paper/45 p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-ink">對應持股明細</p>
+                    <p className="text-sm font-semibold text-ink">持股明細</p>
                     <p className="text-xs text-ink/45">共 {selectedDetails.length} 檔</p>
                   </div>
                   <div className="mt-3 space-y-2">
@@ -754,16 +767,13 @@ function ChartCard({
                           <p className="truncate text-sm font-semibold text-ink">
                             {detail.symbol} {detail.name}
                           </p>
-                          <p className="mt-1 truncate text-xs text-ink/45">
-                            {detail.quantityText} · {basisLabel} {currency(detail.basisValue)}
-                          </p>
-                          <p className="mt-1 text-xs text-ink/45">
-                            占此類別 {percent(detail.ratioOfGroup)} · 占整體 {percent(detail.ratioOfPortfolio)}
-                          </p>
+                          <p className="mt-1 truncate text-xs text-ink/45">{detail.quantityText} · {basisLabel} {currency(detail.basisValue)}</p>
                         </div>
                         <div className="shrink-0 text-right">
-                          <p className="text-sm font-bold text-ink">{currency(detail.marketValue)}</p>
-                          <p className={"mt-1 text-xs font-semibold " + profitClass(detail.unrealizedProfit)}>{currency(detail.unrealizedProfit)}</p>
+                          <span className="inline-flex rounded-full bg-mint/10 px-2.5 py-1 text-xs font-bold tabular-nums text-mint">
+                            {percent(detail.ratioOfGroup)}
+                          </span>
+                          <p className="mt-1 text-xs text-ink/45">占此類別</p>
                         </div>
                       </div>
                     ))}
@@ -806,6 +816,173 @@ function ChartCard({
         </>
       ) : (
         <p className="mt-3 text-sm text-ink/55">{empty}</p>
+      )}
+    </CollapsibleCard>
+  );
+}
+
+function RatioListCard({
+  title,
+  data,
+  empty,
+  basisLabel,
+  details,
+  collapsed,
+  onToggle
+}: {
+  title: string;
+  data: { name: string; value: number; ratio: number }[];
+  empty: string;
+  basisLabel: string;
+  details: Record<string, DetailPositionRow[]>;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const [visibleCount, setVisibleCount] = useState(5);
+
+  useEffect(() => {
+    setVisibleCount(5);
+  }, [data]);
+
+  const topItem = data[0] ?? null;
+
+  return (
+    <CollapsibleCard
+      title={title}
+      subtitle={`依目前範圍計算 ${basisLabel} 占比`}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      summary={
+        topItem ? (
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="最大分類" value={topItem.name} />
+            <MetricTile label="占比" value={percent(topItem.ratio)} />
+          </div>
+        ) : (
+          <p className="text-sm text-ink/55">{empty}</p>
+        )
+      }
+    >
+      {data.length ? (
+        <>
+          <div className="space-y-2">
+            {data.slice(0, visibleCount).map((item, index) => {
+              const detailCount = details[item.name]?.length ?? 0;
+              return (
+                <div key={item.name} className="rounded-xl border border-ink/6 bg-white px-3 py-3 shadow-[0_1px_0_rgba(10,10,10,0.02)]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-ink">{item.name}</p>
+                        <p className="mt-0.5 text-xs tabular-nums text-ink/45">
+                          {currency(item.value)} · {detailCount} 檔
+                        </p>
+                      </div>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-paper px-2.5 py-1 text-sm font-bold tabular-nums text-ink">{percent(item.ratio)}</span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-paper">
+                    <div className="h-full rounded-full" style={{ width: `${Math.min(100, item.ratio * 100)}%`, backgroundColor: colors[index % colors.length] }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {data.length > 5 ? (
+            <ExpandControls
+              visibleCount={Math.min(visibleCount, data.length)}
+              totalCount={data.length}
+              onExpandMore={() => setVisibleCount((current) => Math.min(current + 5, data.length))}
+              onExpandAll={() => setVisibleCount(data.length)}
+              onCollapse={() => setVisibleCount(5)}
+            />
+          ) : null}
+        </>
+      ) : (
+        <p className="text-sm text-ink/55">{empty}</p>
+      )}
+    </CollapsibleCard>
+  );
+}
+
+function AllocationBarCard({
+  title,
+  data,
+  empty,
+  basisLabel,
+  details,
+  collapsed,
+  onToggle
+}: {
+  title: string;
+  data: { name: string; value: number; ratio: number }[];
+  empty: string;
+  basisLabel: string;
+  details: Record<string, DetailPositionRow[]>;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  const etfItem = data.find((item) => item.name === "ETF") ?? null;
+  const equityItem = data.find((item) => item.name === "個股") ?? null;
+
+  return (
+    <CollapsibleCard
+      title={title}
+      subtitle={`依目前範圍計算 ${basisLabel} 占比`}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      summary={
+        data.length ? (
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="ETF" value={percent(etfItem?.ratio ?? 0)} />
+            <MetricTile label="個股" value={percent(equityItem?.ratio ?? 0)} />
+          </div>
+        ) : (
+          <p className="text-sm text-ink/55">{empty}</p>
+        )
+      }
+    >
+      {data.length ? (
+        <div className="space-y-3">
+          <div className="overflow-hidden rounded-full bg-paper">
+            <div className="flex h-4 w-full">
+              {data.map((item, index) => (
+                <div
+                  key={item.name}
+                  className="h-full"
+                  style={{ width: `${Math.max(0, item.ratio * 100)}%`, backgroundColor: colors[index % colors.length] }}
+                  title={`${item.name} ${percent(item.ratio)}`}
+                />
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {data.map((item, index) => {
+              const detailCount = details[item.name]?.length ?? 0;
+              return (
+                <div key={item.name} className="rounded-xl border border-ink/6 bg-paper/55 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-ink">{item.name}</p>
+                        <p className="mt-1 text-xs text-ink/45">{detailCount} 檔</p>
+                      </div>
+                    </div>
+                    <p className="shrink-0 text-sm font-bold tabular-nums text-ink">{percent(item.ratio)}</p>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <MetricTile label={basisLabel} value={currency(item.value)} />
+                    <MetricTile label="配置占比" value={percent(item.ratio)} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-ink/55">{empty}</p>
       )}
     </CollapsibleCard>
   );
@@ -892,14 +1069,6 @@ function CollapsibleCard({
       {collapsed ? <div className="mt-4">{summary}</div> : <div className="mt-4">{children}</div>}
     </section>
   );
-}
-
-function compactCurrency(value: number) {
-  const absolute = Math.abs(value);
-  if (absolute >= 10000) {
-    return Math.round(value / 1000) + "k";
-  }
-  return String(Math.round(value));
 }
 
 function isEtfPosition(position: Position) {
