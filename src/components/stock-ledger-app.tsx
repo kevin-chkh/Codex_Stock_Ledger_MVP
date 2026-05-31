@@ -165,6 +165,35 @@ function toUserError(error: unknown, fallback: string) {
   return fallback;
 }
 
+function taipeiNow() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short"
+  }).formatToParts(new Date());
+
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return {
+    weekday: pick("weekday"),
+    hour: Number(pick("hour")),
+    minute: Number(pick("minute")),
+    second: Number(pick("second"))
+  };
+}
+
+function isTaiwanMarketHours() {
+  const now = taipeiNow();
+  if (now.weekday === "Sat" || now.weekday === "Sun") return false;
+  const totalMinutes = now.hour * 60 + now.minute;
+  return totalMinutes >= 8 * 60 + 30 && totalMinutes < 14 * 60;
+}
+
 const emptyTradeDraft: TradeDraft = {
   portfolioId: "",
   type: "buy",
@@ -210,14 +239,25 @@ export default function StockLedgerApp() {
   const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
 
-  const positions = useMemo(() => buildPositions(trades, stocks, stockTags, positionAdjustments), [trades, stocks, stockTags, positionAdjustments]);
   const catalogBySymbol = useMemo(() => new Map(stockCatalog.map((item) => [item.symbol, item])), [stockCatalog]);
+  const effectiveStocks = useMemo(
+    () =>
+      stocks.map((stock) => {
+        const catalogItem = catalogBySymbol.get(stock.symbol);
+        return {
+          ...stock,
+          industry: resolveIndustryValue(stock.industry, catalogItem?.industry)
+        };
+      }),
+    [stocks, catalogBySymbol]
+  );
+  const positions = useMemo(() => buildPositions(trades, effectiveStocks, stockTags, positionAdjustments), [trades, effectiveStocks, stockTags, positionAdjustments]);
   const stockSignature = useMemo(() => stocks.map((stock) => stock.id).sort().join("|"), [stocks]);
   const latestQuoteAt = useMemo(() => {
-    const timestamps = stocks.map((stock) => stock.price_updated_at).filter((value): value is string => Boolean(value));
+    const timestamps = effectiveStocks.map((stock) => stock.price_updated_at).filter((value): value is string => Boolean(value));
     if (!timestamps.length) return null;
     return timestamps.reduce((latest, current) => (new Date(current).getTime() > new Date(latest).getTime() ? current : latest));
-  }, [stocks]);
+  }, [effectiveStocks]);
   const activePortfolioId = useMemo(() => {
     if (selectedPortfolioId && portfolios.some((portfolio) => portfolio.id === selectedPortfolioId)) return selectedPortfolioId;
     return portfolios[0]?.id || "";
@@ -275,10 +315,13 @@ export default function StockLedgerApp() {
     let cancelled = false;
     const run = async () => {
       if (cancelled || typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (!isTaiwanMarketHours()) return;
       await refreshQuotes(false);
     };
 
-    void run();
+    if (isTaiwanMarketHours()) {
+      void run();
+    }
     const timer = window.setInterval(() => {
       void run();
     }, 90000);
@@ -416,7 +459,21 @@ export default function StockLedgerApp() {
         }
       }
 
-      if (updatedCount) setStocks(nextStocks);
+      if (updatedCount) {
+        setStocks((current) =>
+          current.map((stock) => {
+            const quote = quoteMap.get(stock.symbol);
+            if (!quote) return stock;
+            return {
+              ...stock,
+              market: quote.market || stock.market,
+              current_price: quote.price,
+              price_updated_at: quote.priceUpdatedAt,
+              updated_at: now
+            };
+          })
+        );
+      }
 
       if (showResultMessage) {
         if (!updatedCount) {
@@ -1488,7 +1545,7 @@ export default function StockLedgerApp() {
                 dataSyncInfo={{
                   catalogSourceLabel,
                   latestQuoteLabel: formatQuoteUpdatedAt(latestQuoteAt),
-                  autoRefreshLabel: "90 秒自動更新"
+                  autoRefreshLabel: "盤中自動更新"
                 }}
                 onSubmit={updateSettings}
                 onExport={exportJsonBackup}
@@ -1653,6 +1710,13 @@ function normalizeSettings(row: Record<string, unknown>): UserSettings {
     minimum_fee: numberValue(row.minimum_fee),
     allow_negative_cash: Boolean(row.allow_negative_cash)
   };
+}
+
+function resolveIndustryValue(primary: string | null | undefined, fallback?: string | null) {
+  const normalizedPrimary = primary?.trim();
+  if (normalizedPrimary && normalizedPrimary !== "未分類") return normalizedPrimary;
+  const normalizedFallback = fallback?.trim();
+  return normalizedFallback || primary || null;
 }
 
 function sheetTitle(mode: SheetMode) {

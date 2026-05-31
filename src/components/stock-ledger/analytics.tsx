@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { currency, percent, profitClass } from "@/lib/format";
 import { groupByValue, roundMoney } from "@/lib/calculations";
@@ -6,6 +8,8 @@ import type { Portfolio, Position, Stock, Trade } from "@/lib/types";
 import { ListSection, PortfolioScopePicker, SmallCard } from "./ui";
 
 const colors = ["#2f7d68", "#c6973f", "#c75b4d", "#4f6f9f", "#7c6a9d", "#61705f"];
+const ANALYTICS_COLLAPSE_STORAGE_KEY = "stock-ledger.analytics.collapsed";
+const COLLAPSIBLE_CARD_KEYS = ["industry", "tags", "etfEquity", "assets", "concentration", "trend", "behavior", "contribution"] as const;
 
 type TrendWindow = "14d" | "30d";
 type ProfitMode = "realized" | "unrealized";
@@ -36,6 +40,7 @@ export function Analytics({
   const [concentrationVisibleCount, setConcentrationVisibleCount] = useState(5);
   const [profitVisibleCount, setProfitVisibleCount] = useState(5);
   const [contributionGroup, setContributionGroup] = useState<ContributionGroup>("stock");
+  const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>({});
 
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
   const availableTags = useMemo(() => {
@@ -53,6 +58,31 @@ export function Analytics({
     setConcentrationVisibleCount(5);
     setProfitVisibleCount(5);
   }, [tagFilter, analysisBasis, profitMode, selectedPortfolioId, contributionGroup]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = window.localStorage.getItem(ANALYTICS_COLLAPSE_STORAGE_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as Record<string, boolean>;
+      setCollapsedCards(parsed);
+    } catch {
+      // Ignore malformed localStorage state.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(ANALYTICS_COLLAPSE_STORAGE_KEY, JSON.stringify(collapsedCards));
+  }, [collapsedCards]);
+
+  function toggleCard(key: string) {
+    setCollapsedCards((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function setAllCardsCollapsed(nextCollapsed: boolean) {
+    setCollapsedCards(Object.fromEntries(COLLAPSIBLE_CARD_KEYS.map((key) => [key, nextCollapsed])));
+  }
 
   const holdingsValue = filteredPositions.reduce((sum, position) => sum + position.market_value, 0);
   const basisLabel = analysisBasis === "marketValue" ? "持股市值" : "持有成本";
@@ -157,6 +187,36 @@ export function Analytics({
       }));
   }, [filteredPositions, holdingsBasisTotal, analysisBasis]);
   const etfRatio = etfEquityData.find((item) => item.name === "ETF")?.ratio ?? 0;
+  const industryDetails = useMemo(
+    () =>
+      buildDetailLookup(
+        industryData,
+        filteredPositions,
+        analysisBasis,
+        (name, position) => position.industry === name
+      ),
+    [industryData, filteredPositions, analysisBasis]
+  );
+  const tagDetails = useMemo(
+    () =>
+      buildDetailLookup(
+        tagData,
+        filteredPositions,
+        analysisBasis,
+        (name, position) => (name === "未標籤" ? position.tags.length === 0 : position.tags.includes(name))
+      ),
+    [tagData, filteredPositions, analysisBasis]
+  );
+  const etfEquityDetails = useMemo(
+    () =>
+      buildDetailLookup(
+        etfEquityData,
+        filteredPositions,
+        analysisBasis,
+        (name, position) => (name === "ETF" ? isEtfPosition(position) : !isEtfPosition(position))
+      ),
+    [etfEquityData, filteredPositions, analysisBasis]
+  );
 
   const maxGainPosition = useMemo(() => {
     if (!filteredPositions.length) return null;
@@ -207,6 +267,8 @@ export function Analytics({
       mostTradedCount: mostTraded?.count ?? 0
     };
   }, [recentTrades, stocks]);
+
+  const allCardsCollapsed = COLLAPSIBLE_CARD_KEYS.every((key) => collapsedCards[key]);
 
   const stockProfitRows = useMemo(() => {
     const grouped = new Map<
@@ -333,16 +395,34 @@ export function Analytics({
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-bold">分析口徑</h2>
+            <h2 className="font-bold">分析模式</h2>
             <p className="mt-1 text-xs text-ink/50">切換目前配置要以持股市值或持有成本查看</p>
           </div>
-          <div className="rounded-md bg-paper p-1 text-sm">
-            <button className={"rounded px-3 py-1.5 " + (analysisBasis === "marketValue" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setAnalysisBasis("marketValue")}>
-              持股市值
-            </button>
-            <button className={"rounded px-3 py-1.5 " + (analysisBasis === "holdingCost" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setAnalysisBasis("holdingCost")}>
-              持有成本
-            </button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="rounded-md bg-paper p-1 text-sm">
+              <button className={"rounded px-3 py-1.5 " + (analysisBasis === "marketValue" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setAnalysisBasis("marketValue")}>
+                持股市值
+              </button>
+              <button className={"rounded px-3 py-1.5 " + (analysisBasis === "holdingCost" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setAnalysisBasis("holdingCost")}>
+                持有成本
+              </button>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 text-xs font-semibold">
+              <button
+                type="button"
+                className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-ink/75"
+                onClick={() => setAllCardsCollapsed(false)}
+              >
+                全部展開
+              </button>
+              <button
+                type="button"
+                className={"rounded-full border px-3 py-1.5 " + (allCardsCollapsed ? "border-mint/15 bg-mint/5 text-mint" : "border-ink/10 bg-white text-ink/75")}
+                onClick={() => setAllCardsCollapsed(true)}
+              >
+                全部收合
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -369,27 +449,43 @@ export function Analytics({
         />
       </section>
 
-      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} />
-      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} />
-      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} />
-      <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-        <div>
-          <h2 className="font-bold">資產組成</h2>
-          <p className="mt-1 text-xs text-ink/50">目前先顯示當前組成，歷史總資產趨勢即將推出。</p>
-        </div>
-        <div className="mt-3 grid grid-cols-3 gap-2">
+      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} details={industryDetails} collapsed={collapsedCards.industry ?? false} onToggle={() => toggleCard("industry")} />
+      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} details={tagDetails} collapsed={collapsedCards.tags ?? false} onToggle={() => toggleCard("tags")} />
+      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} details={etfEquityDetails} collapsed={collapsedCards.etfEquity ?? false} onToggle={() => toggleCard("etfEquity")} />
+      <CollapsibleCard
+        title="資產組成"
+        subtitle="目前先顯示當前組成，歷史總資產趨勢即將推出。"
+        collapsed={collapsedCards.assets ?? false}
+        onToggle={() => toggleCard("assets")}
+        summary={
+          <div className="grid grid-cols-3 gap-2">
+            <MetricTile label="現金" value={currency(cash)} />
+            <MetricTile label="持股市值" value={currency(holdingsValue)} />
+            <MetricTile label="總持股檔數" value={`${filteredPositions.length} 檔`} />
+          </div>
+        }
+      >
+        <div className="grid grid-cols-3 gap-2">
           <MetricTile label="現金" value={currency(cash)} />
           <MetricTile label="持股市值" value={currency(holdingsValue)} />
           <MetricTile label="總持股檔數" value={`${filteredPositions.length} 檔`} />
         </div>
-      </section>
+      </CollapsibleCard>
 
-      <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-        <div>
-          <h2 className="font-bold">持股集中度</h2>
-          <p className="mt-1 text-xs text-ink/50">快速看目前部位是否過度集中在少數標的</p>
-        </div>
-        <div className="mt-3 grid grid-cols-3 gap-2">
+      <CollapsibleCard
+        title="持股集中度"
+        subtitle="快速看目前部位是否過度集中在少數標的"
+        collapsed={collapsedCards.concentration ?? false}
+        onToggle={() => toggleCard("concentration")}
+        summary={
+          <div className="grid grid-cols-3 gap-2">
+            <MetricTile label="最大單一持股" value={percent(topPositionRatio)} />
+            <MetricTile label="前 3 大持股" value={percent(topThreeRatio)} />
+            <MetricTile label="ETF 配置" value={percent(etfRatio)} />
+          </div>
+        }
+      >
+        <div className="grid grid-cols-3 gap-2">
           <MetricTile label="最大單一持股" value={percent(topPositionRatio)} />
           <MetricTile label="前 3 大持股" value={percent(topThreeRatio)} />
           <MetricTile label="ETF 配置" value={percent(etfRatio)} />
@@ -416,14 +512,22 @@ export function Analytics({
             onCollapse={() => setConcentrationVisibleCount(5)}
           />
         ) : null}
-      </section>
+      </CollapsibleCard>
 
-      <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-bold">投資趨勢</h2>
-            <p className="mt-1 text-xs text-ink/50">比較最近買入、賣出與淨投入變化</p>
+      <CollapsibleCard
+        title="投資趨勢"
+        subtitle="比較最近買入、賣出與淨投入變化"
+        collapsed={collapsedCards.trend ?? false}
+        onToggle={() => toggleCard("trend")}
+        summary={
+          <div className="grid grid-cols-3 gap-2">
+            <MetricTile label="買入" value={currency(trendSummary.buy)} />
+            <MetricTile label="賣出" value={currency(trendSummary.sell)} />
+            <MetricTile label="淨投入" value={currency(trendSummary.net)} valueClass={profitClass(trendSummary.net)} />
           </div>
+        }
+      >
+        <div className="flex items-center justify-end">
           <div className="rounded-md bg-paper p-1 text-sm">
             <button className={"rounded px-3 py-1.5 " + (trendWindow === "14d" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setTrendWindow("14d")}>
               近 2 週
@@ -455,14 +559,23 @@ export function Analytics({
         ) : (
           <p className="mt-4 text-sm text-ink/55">尚無近期交易資料</p>
         )}
-      </section>
+      </CollapsibleCard>
 
-      <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="font-bold">交易行為摘要</h2>
-            <p className="mt-1 text-xs text-ink/50">依目前時間區間彙整最近的操作密度與交易習慣</p>
+      <CollapsibleCard
+        title="交易行為摘要"
+        subtitle="依目前時間區間彙整最近的操作密度與交易習慣"
+        collapsed={collapsedCards.behavior ?? false}
+        onToggle={() => toggleCard("behavior")}
+        summary={
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="買入次數" value={`${tradeBehavior.buyCount} 次`} />
+            <MetricTile label="賣出次數" value={`${tradeBehavior.sellCount} 次`} />
+            <MetricTile label="平均單筆買入" value={currency(tradeBehavior.avgBuyAmount)} />
+            <MetricTile label="最常交易標的" value={tradeBehavior.mostTradedCount ? `${tradeBehavior.mostTradedCount} 次` : "0 次"} />
           </div>
+        }
+      >
+        <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-ink/50">{trendWindow === "14d" ? "近 2 週" : "近 1 個月"}</p>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -475,9 +588,23 @@ export function Analytics({
           <p className="text-xs text-ink/55">最常交易標的</p>
           <p className="mt-1 text-sm font-semibold">{tradeBehavior.mostTradedLabel}</p>
         </div>
-      </section>
+      </CollapsibleCard>
 
-      <ListSection title="損益貢獻分析" empty="尚無可顯示的損益資料">
+      <CollapsibleCard
+        title="損益貢獻分析"
+        subtitle="依股票、產業或標籤查看目前主要的獲利與虧損來源"
+        collapsed={collapsedCards.contribution ?? false}
+        onToggle={() => toggleCard("contribution")}
+        summary={
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="模式" value={profitMode === "realized" ? "已實現" : "未實現"} />
+            <MetricTile
+              label="目前維度"
+              value={contributionGroup === "stock" ? "股票" : contributionGroup === "industry" ? "產業" : "標籤"}
+            />
+          </div>
+        }
+      >
         <div className="space-y-3">
           <div className="rounded-md bg-paper p-1 text-sm">
             <button className={"rounded px-3 py-1.5 " + (profitMode === "unrealized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("unrealized")}>
@@ -499,15 +626,17 @@ export function Analytics({
             </button>
           </div>
         </div>
-        {contributionRows.slice(0, profitVisibleCount).map((item) => (
-          <div key={item.key} className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3">
-            <div className="min-w-0">
-              <p className="truncate font-semibold">{item.label}</p>
-              <p className="mt-1 truncate text-sm text-ink/55">{item.subtitle}</p>
+        <div className="mt-3 space-y-3">
+          {contributionRows.slice(0, profitVisibleCount).map((item) => (
+            <div key={item.key} className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3">
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{item.label}</p>
+                <p className="mt-1 truncate text-sm text-ink/55">{item.subtitle}</p>
+              </div>
+              <p className={"shrink-0 text-sm font-bold " + profitClass(item.value)}>{currency(item.value)}</p>
             </div>
-            <p className={"shrink-0 text-sm font-bold " + profitClass(item.value)}>{currency(item.value)}</p>
-          </div>
-        ))}
+          ))}
+        </div>
         {contributionRows.length > 5 ? (
           <ExpandControls
             visibleCount={Math.min(profitVisibleCount, contributionRows.length)}
@@ -517,7 +646,7 @@ export function Analytics({
             onCollapse={() => setProfitVisibleCount(5)}
           />
         ) : null}
-      </ListSection>
+      </CollapsibleCard>
     </div>
   );
 }
@@ -526,29 +655,54 @@ function ChartCard({
   title,
   data,
   empty,
-  basisLabel
+  basisLabel,
+  details,
+  collapsed,
+  onToggle
 }: {
   title: string;
   data: { name: string; value: number; ratio: number }[];
   empty: string;
   basisLabel: string;
+  details: Record<string, DetailPositionRow[]>;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   const [selectedName, setSelectedName] = useState<string>(data[0]?.name ?? "");
   const [visibleCount, setVisibleCount] = useState(5);
+  const [detailVisibleCount, setDetailVisibleCount] = useState(5);
 
   useEffect(() => {
     setSelectedName(data[0]?.name ?? "");
     setVisibleCount(5);
+    setDetailVisibleCount(5);
   }, [data]);
 
+  useEffect(() => {
+    setDetailVisibleCount(5);
+  }, [selectedName]);
+
   const selectedItem = data.find((item) => item.name === selectedName) ?? data[0];
+  const selectedDetails = selectedItem ? details[selectedItem.name] ?? [] : [];
   return (
-    <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="font-bold">{title}</h2>
-          <p className="mt-1 text-xs text-ink/45">依目前範圍計算 {basisLabel} 占比</p>
-        </div>
+    <CollapsibleCard
+      title={title}
+      subtitle={`依目前範圍計算 ${basisLabel} 占比`}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      summary={
+        selectedItem ? (
+          <div className="grid grid-cols-3 gap-2">
+            <MetricTile label="最大分類" value={selectedItem.name} />
+            <MetricTile label={basisLabel} value={currency(selectedItem.value)} />
+            <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
+          </div>
+        ) : (
+          <p className="text-sm text-ink/55">{empty}</p>
+        )
+      }
+    >
+      <div className="flex items-center justify-end">
         <div className="rounded-full bg-paper px-3 py-1 text-xs font-semibold tabular-nums text-ink/55">{data.length} 類</div>
       </div>
       {data.length ? (
@@ -589,6 +743,41 @@ function ChartCard({
                 <MetricTile label={basisLabel} value={currency(selectedItem.value)} />
                 <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
               </div>
+              {selectedDetails.length ? (
+                <div className="mt-4 rounded-xl border border-ink/8 bg-paper/45 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-ink">對應持股資訊</p>
+                    <p className="text-xs text-ink/45">共 {selectedDetails.length} 檔</p>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {selectedDetails.slice(0, detailVisibleCount).map((detail) => (
+                      <div key={detail.key} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-ink">
+                            {detail.symbol} {detail.name}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-ink/45">
+                            {detail.quantityText} · {basisLabel} {currency(detail.basisValue)}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-bold text-ink">{currency(detail.marketValue)}</p>
+                          <p className={"mt-1 text-xs font-semibold " + profitClass(detail.unrealizedProfit)}>{currency(detail.unrealizedProfit)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {selectedDetails.length > 5 ? (
+                    <ExpandControls
+                      visibleCount={Math.min(detailVisibleCount, selectedDetails.length)}
+                      totalCount={selectedDetails.length}
+                      onExpandMore={() => setDetailVisibleCount((current) => Math.min(current + 5, selectedDetails.length))}
+                      onExpandAll={() => setDetailVisibleCount(selectedDetails.length)}
+                      onCollapse={() => setDetailVisibleCount(5)}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className="mt-3 space-y-2">
@@ -626,7 +815,7 @@ function ChartCard({
       ) : (
         <p className="mt-3 text-sm text-ink/55">{empty}</p>
       )}
-    </section>
+    </CollapsibleCard>
   );
 }
 
@@ -677,6 +866,42 @@ function ExpandControls({
   );
 }
 
+function CollapsibleCard({
+  title,
+  subtitle,
+  collapsed,
+  onToggle,
+  summary,
+  children
+}: {
+  title: string;
+  subtitle: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  summary: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="font-bold">{title}</h2>
+          <p className="mt-1 text-xs text-ink/50">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          className="rounded-full border border-ink/10 bg-paper p-2 text-ink/65"
+          aria-label={collapsed ? `展開${title}` : `收合${title}`}
+          onClick={onToggle}
+        >
+          {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+        </button>
+      </div>
+      {collapsed ? <div className="mt-4">{summary}</div> : <div className="mt-4">{children}</div>}
+    </section>
+  );
+}
+
 function compactCurrency(value: number) {
   const absolute = Math.abs(value);
   if (absolute >= 10000) {
@@ -686,7 +911,10 @@ function compactCurrency(value: number) {
 }
 
 function isEtfPosition(position: Position) {
-  return position.industry.toUpperCase().includes("ETF");
+  const industry = position.industry.toUpperCase();
+  const name = position.name.toUpperCase();
+  if (industry.includes("ETF") || name.includes("ETF")) return true;
+  return /^00\d{2,3}$/.test(position.symbol);
 }
 
 function isUuidLike(value: string) {
@@ -696,4 +924,38 @@ function isUuidLike(value: string) {
 function getPositionBasisValue(position: Position | undefined, basis: AnalysisBasis) {
   if (!position) return 0;
   return basis === "marketValue" ? position.market_value : position.holding_cost;
+}
+
+type DetailPositionRow = {
+  key: string;
+  symbol: string;
+  name: string;
+  quantityText: string;
+  basisValue: number;
+  marketValue: number;
+  unrealizedProfit: number;
+};
+
+function buildDetailLookup(
+  groups: { name: string }[],
+  positions: Position[],
+  basis: AnalysisBasis,
+  matcher: (name: string, position: Position) => boolean
+) {
+  const lookup: Record<string, DetailPositionRow[]> = {};
+  for (const group of groups) {
+    lookup[group.name] = positions
+      .filter((position) => matcher(group.name, position))
+      .sort((a, b) => getPositionBasisValue(b, basis) - getPositionBasisValue(a, basis))
+      .map((position) => ({
+        key: position.stock_id,
+        symbol: position.symbol,
+        name: position.name,
+        quantityText: `${position.quantity} 股`,
+        basisValue: getPositionBasisValue(position, basis),
+        marketValue: position.market_value,
+        unrealizedProfit: position.unrealized_profit
+      }));
+  }
+  return lookup;
 }
