@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Download, LayoutGrid, List, Search, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, LayoutGrid, List, MoreHorizontal, Search, Upload } from "lucide-react";
 import { useMemo, useState } from "react";
 import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Portfolio, Position } from "@/lib/types";
@@ -26,6 +26,7 @@ export function Holdings({
   const [sortBy, setSortBy] = useState<"marketValue" | "returnRate" | "profit" | "symbol">("marketValue");
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "expanded">("list");
+  const [showTools, setShowTools] = useState(false);
 
   const feeSummary = useMemo(
     () => ({
@@ -74,6 +75,52 @@ export function Holdings({
             onChange={onPortfolioChange}
             options={portfolios.map((portfolio) => [portfolio.id, portfolio.name])}
           />
+          <div className="relative">
+            <button
+              type="button"
+              className="rounded-full border border-ink/10 bg-paper p-2 text-ink/70"
+              aria-label="開啟持股工具"
+              title="持股工具"
+              onClick={() => setShowTools((current) => !current)}
+            >
+              <MoreHorizontal size={18} />
+            </button>
+            {showTools ? (
+              <div className="absolute right-0 top-11 z-20 w-56 rounded-xl border border-ink/10 bg-white p-2 text-sm shadow-soft">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-semibold text-ink hover:bg-paper"
+                  onClick={() => {
+                    exportHoldingsCsv(filteredPositions, portfolios);
+                    setShowTools(false);
+                  }}
+                >
+                  <Download size={16} />
+                  匯出持股 CSV
+                </button>
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 font-semibold text-ink hover:bg-paper">
+                  <Upload size={16} />
+                  匯入持股 CSV
+                  <input
+                    className="hidden"
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) onImportCsv(file);
+                      event.target.value = "";
+                      setShowTools(false);
+                    }}
+                  />
+                </label>
+                <div className="mt-2 rounded-lg bg-paper px-3 py-2 text-xs leading-5 text-ink/60">
+                  <p className="font-semibold text-ink/75">匯入格式</p>
+                  <p>必填：帳本、股票代號、股票名稱、持有股數、持有成本</p>
+                  <p>可選：目前價格、產業別、標籤</p>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
         <label className="flex items-center gap-2 rounded-md border border-ink/15 px-3 py-2">
           <Search size={18} className="shrink-0 text-ink/45" />
@@ -107,32 +154,6 @@ export function Holdings({
             <option value="profit">未實現損益高到低</option>
             <option value="symbol">代號小到大</option>
           </select>
-          <button
-            className="flex items-center justify-center gap-2 rounded-md bg-ink px-3 py-2 text-sm font-semibold text-white"
-            onClick={() => exportHoldingsCsv(filteredPositions, portfolios)}
-          >
-            <Download size={17} />
-            匯出持股
-          </button>
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-ink/15 px-3 py-2 text-sm font-semibold">
-            <Upload size={17} />
-            匯入持股
-            <input
-              className="hidden"
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) onImportCsv(file);
-                event.target.value = "";
-              }}
-            />
-          </label>
-        </div>
-        <div className="mt-3 rounded-md bg-paper px-3 py-3 text-xs leading-6 text-ink/60">
-          <p className="font-semibold text-ink/75">持股匯入格式</p>
-          <p>必填：帳本、股票代號、股票名稱、持有股數、持有成本</p>
-          <p>可選：目前價格、產業別、標籤。匯入會更新目前庫存校正資料，不會新增交易紀錄。</p>
         </div>
       </section>
 
