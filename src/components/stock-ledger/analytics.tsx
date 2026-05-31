@@ -187,36 +187,6 @@ export function Analytics({
       }));
   }, [filteredPositions, holdingsBasisTotal, analysisBasis]);
   const etfRatio = etfEquityData.find((item) => item.name === "ETF")?.ratio ?? 0;
-  const industryDetails = useMemo(
-    () =>
-      buildDetailLookup(
-        industryData,
-        filteredPositions,
-        analysisBasis,
-        (name, position) => position.industry === name
-      ),
-    [industryData, filteredPositions, analysisBasis]
-  );
-  const tagDetails = useMemo(
-    () =>
-      buildDetailLookup(
-        tagData,
-        filteredPositions,
-        analysisBasis,
-        (name, position) => (name === "未標籤" ? position.tags.length === 0 : position.tags.includes(name))
-      ),
-    [tagData, filteredPositions, analysisBasis]
-  );
-  const etfEquityDetails = useMemo(
-    () =>
-      buildDetailLookup(
-        etfEquityData,
-        filteredPositions,
-        analysisBasis,
-        (name, position) => (name === "ETF" ? isEtfPosition(position) : !isEtfPosition(position))
-      ),
-    [etfEquityData, filteredPositions, analysisBasis]
-  );
 
   const maxGainPosition = useMemo(() => {
     if (!filteredPositions.length) return null;
@@ -393,12 +363,12 @@ export function Analytics({
       </section>
 
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="font-bold">分析模式</h2>
             <p className="mt-1 text-xs text-ink/50">切換目前配置要以持股市值或持有成本查看</p>
           </div>
-          <div className="flex flex-col items-end gap-2">
+          <div className="space-y-2 sm:min-w-[240px]">
             <div className="rounded-md bg-paper p-1 text-sm">
               <button className={"rounded px-3 py-1.5 " + (analysisBasis === "marketValue" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setAnalysisBasis("marketValue")}>
                 持股市值
@@ -407,7 +377,9 @@ export function Analytics({
                 持有成本
               </button>
             </div>
-            <div className="flex flex-wrap justify-end gap-2 text-xs font-semibold">
+            <div className="flex items-center justify-between gap-3 rounded-md bg-paper/70 px-3 py-2">
+              <p className="text-xs font-medium text-ink/55">區塊檢視</p>
+              <div className="flex flex-wrap justify-end gap-2 text-xs font-semibold">
               <button
                 type="button"
                 className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-ink/75"
@@ -422,6 +394,7 @@ export function Analytics({
               >
                 全部收合
               </button>
+              </div>
             </div>
           </div>
         </div>
@@ -449,9 +422,9 @@ export function Analytics({
         />
       </section>
 
-      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} details={industryDetails} collapsed={collapsedCards.industry ?? false} onToggle={() => toggleCard("industry")} />
-      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} details={tagDetails} collapsed={collapsedCards.tags ?? false} onToggle={() => toggleCard("tags")} />
-      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} details={etfEquityDetails} collapsed={collapsedCards.etfEquity ?? false} onToggle={() => toggleCard("etfEquity")} />
+      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} collapsed={collapsedCards.industry ?? false} onToggle={() => toggleCard("industry")} />
+      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} collapsed={collapsedCards.tags ?? false} onToggle={() => toggleCard("tags")} />
+      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} collapsed={collapsedCards.etfEquity ?? false} onToggle={() => toggleCard("etfEquity")} />
       <CollapsibleCard
         title="資產組成"
         subtitle="目前先顯示當前組成，歷史總資產趨勢即將推出。"
@@ -656,7 +629,6 @@ function ChartCard({
   data,
   empty,
   basisLabel,
-  details,
   collapsed,
   onToggle
 }: {
@@ -664,26 +636,18 @@ function ChartCard({
   data: { name: string; value: number; ratio: number }[];
   empty: string;
   basisLabel: string;
-  details: Record<string, DetailPositionRow[]>;
   collapsed: boolean;
   onToggle: () => void;
 }) {
   const [selectedName, setSelectedName] = useState<string>(data[0]?.name ?? "");
   const [visibleCount, setVisibleCount] = useState(5);
-  const [detailVisibleCount, setDetailVisibleCount] = useState(5);
 
   useEffect(() => {
     setSelectedName(data[0]?.name ?? "");
     setVisibleCount(5);
-    setDetailVisibleCount(5);
   }, [data]);
 
-  useEffect(() => {
-    setDetailVisibleCount(5);
-  }, [selectedName]);
-
   const selectedItem = data.find((item) => item.name === selectedName) ?? data[0];
-  const selectedDetails = selectedItem ? details[selectedItem.name] ?? [] : [];
   return (
     <CollapsibleCard
       title={title}
@@ -720,7 +684,10 @@ function ChartCard({
                     paddingAngle={3}
                     stroke="#f7f4ee"
                     strokeWidth={3}
-                    onClick={(_, index) => setSelectedName(data[index]?.name ?? "")}
+                    onClick={(_, index) => {
+                      const name = data[index]?.name ?? "";
+                      if (name) setSelectedName(name);
+                    }}
                   >
                     {data.map((entry, index) => (
                       <Cell key={entry.name} fill={colors[index % colors.length]} />
@@ -735,49 +702,15 @@ function ChartCard({
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-ink">{selectedItem.name}</p>
-                  <p className="mt-1 text-xs text-ink/45">目前選取扇區明細</p>
+                  <p className="mt-1 text-xs text-ink/45">目前選取扇區摘要</p>
                 </div>
                 <span className="rounded-full bg-mint/10 px-3 py-1.5 text-sm font-bold tabular-nums text-mint">{percent(selectedItem.ratio)}</span>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-3 gap-2">
                 <MetricTile label={basisLabel} value={currency(selectedItem.value)} />
                 <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
+                <MetricTile label="占整體" value={percent(selectedItem.ratio)} />
               </div>
-              {selectedDetails.length ? (
-                <div className="mt-4 rounded-xl border border-ink/8 bg-paper/45 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-ink">對應持股資訊</p>
-                    <p className="text-xs text-ink/45">共 {selectedDetails.length} 檔</p>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {selectedDetails.slice(0, detailVisibleCount).map((detail) => (
-                      <div key={detail.key} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-ink">
-                            {detail.symbol} {detail.name}
-                          </p>
-                          <p className="mt-1 truncate text-xs text-ink/45">
-                            {detail.quantityText} · {basisLabel} {currency(detail.basisValue)}
-                          </p>
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <p className="text-sm font-bold text-ink">{currency(detail.marketValue)}</p>
-                          <p className={"mt-1 text-xs font-semibold " + profitClass(detail.unrealizedProfit)}>{currency(detail.unrealizedProfit)}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  {selectedDetails.length > 5 ? (
-                    <ExpandControls
-                      visibleCount={Math.min(detailVisibleCount, selectedDetails.length)}
-                      totalCount={selectedDetails.length}
-                      onExpandMore={() => setDetailVisibleCount((current) => Math.min(current + 5, selectedDetails.length))}
-                      onExpandAll={() => setDetailVisibleCount(selectedDetails.length)}
-                      onCollapse={() => setDetailVisibleCount(5)}
-                    />
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           ) : null}
           <div className="mt-3 space-y-2">
@@ -924,38 +857,4 @@ function isUuidLike(value: string) {
 function getPositionBasisValue(position: Position | undefined, basis: AnalysisBasis) {
   if (!position) return 0;
   return basis === "marketValue" ? position.market_value : position.holding_cost;
-}
-
-type DetailPositionRow = {
-  key: string;
-  symbol: string;
-  name: string;
-  quantityText: string;
-  basisValue: number;
-  marketValue: number;
-  unrealizedProfit: number;
-};
-
-function buildDetailLookup(
-  groups: { name: string }[],
-  positions: Position[],
-  basis: AnalysisBasis,
-  matcher: (name: string, position: Position) => boolean
-) {
-  const lookup: Record<string, DetailPositionRow[]> = {};
-  for (const group of groups) {
-    lookup[group.name] = positions
-      .filter((position) => matcher(group.name, position))
-      .sort((a, b) => getPositionBasisValue(b, basis) - getPositionBasisValue(a, basis))
-      .map((position) => ({
-        key: position.stock_id,
-        symbol: position.symbol,
-        name: position.name,
-        quantityText: `${position.quantity} 股`,
-        basisValue: getPositionBasisValue(position, basis),
-        marketValue: position.market_value,
-        unrealizedProfit: position.unrealized_profit
-      }));
-  }
-  return lookup;
 }
