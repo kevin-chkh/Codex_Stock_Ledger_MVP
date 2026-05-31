@@ -9,6 +9,8 @@ const colors = ["#2f7d68", "#c6973f", "#c75b4d", "#4f6f9f", "#7c6a9d", "#61705f"
 
 type TrendWindow = "14d" | "30d";
 type ProfitMode = "realized" | "unrealized";
+type AnalysisBasis = "marketValue" | "holdingCost";
+type ContributionGroup = "stock" | "industry" | "tag";
 
 export function Analytics({
   positions,
@@ -30,6 +32,10 @@ export function Analytics({
   const [tagFilter, setTagFilter] = useState("all");
   const [trendWindow, setTrendWindow] = useState<TrendWindow>("14d");
   const [profitMode, setProfitMode] = useState<ProfitMode>("unrealized");
+  const [analysisBasis, setAnalysisBasis] = useState<AnalysisBasis>("marketValue");
+  const [concentrationVisibleCount, setConcentrationVisibleCount] = useState(5);
+  const [profitVisibleCount, setProfitVisibleCount] = useState(5);
+  const [contributionGroup, setContributionGroup] = useState<ContributionGroup>("stock");
 
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
   const availableTags = useMemo(() => {
@@ -43,18 +49,29 @@ export function Analytics({
     [openPositions, tagFilter]
   );
 
+  useEffect(() => {
+    setConcentrationVisibleCount(5);
+    setProfitVisibleCount(5);
+  }, [tagFilter, analysisBasis, profitMode, selectedPortfolioId, contributionGroup]);
+
   const holdingsValue = filteredPositions.reduce((sum, position) => sum + position.market_value, 0);
-  const industryData = groupByValue(filteredPositions, (position) => position.industry, (position) => position.market_value).map((item) => ({
+  const basisLabel = analysisBasis === "marketValue" ? "持股市值" : "持有成本";
+  const holdingsBasisTotal = filteredPositions.reduce((sum, position) => sum + getPositionBasisValue(position, analysisBasis), 0);
+  const industryData = groupByValue(filteredPositions, (position) => position.industry, (position) => getPositionBasisValue(position, analysisBasis)).map((item) => ({
     ...item,
-    ratio: holdingsValue > 0 ? item.value / holdingsValue : 0
+    ratio: holdingsBasisTotal > 0 ? item.value / holdingsBasisTotal : 0
   }));
   const tagData = groupByValue(
-    filteredPositions.flatMap((position) => (position.tags.length ? position.tags.map((tag) => ({ tag, value: position.market_value })) : [{ tag: "未標籤", value: position.market_value }])),
+    filteredPositions.flatMap((position) =>
+      position.tags.length
+        ? position.tags.map((tag) => ({ tag, value: getPositionBasisValue(position, analysisBasis) }))
+        : [{ tag: "未標籤", value: getPositionBasisValue(position, analysisBasis) }]
+    ),
     (item) => item.tag,
     (item) => item.value
   ).map((item) => ({
     ...item,
-    ratio: holdingsValue > 0 ? item.value / holdingsValue : 0
+    ratio: holdingsBasisTotal > 0 ? item.value / holdingsBasisTotal : 0
   }));
 
   const latestTradeDate = useMemo(() => {
@@ -113,9 +130,15 @@ export function Analytics({
   );
 
   const topIndustryRatio = industryData[0]?.ratio ?? 0;
-  const sortedPositions = useMemo(() => [...filteredPositions].sort((a, b) => b.market_value - a.market_value), [filteredPositions]);
-  const topPositionRatio = holdingsValue > 0 ? (sortedPositions[0]?.market_value ?? 0) / holdingsValue : 0;
-  const topThreeRatio = holdingsValue > 0 ? sortedPositions.slice(0, 3).reduce((sum, position) => sum + position.market_value, 0) / holdingsValue : 0;
+  const sortedPositions = useMemo(
+    () => [...filteredPositions].sort((a, b) => getPositionBasisValue(b, analysisBasis) - getPositionBasisValue(a, analysisBasis)),
+    [filteredPositions, analysisBasis]
+  );
+  const topPositionRatio = holdingsBasisTotal > 0 ? getPositionBasisValue(sortedPositions[0], analysisBasis) / holdingsBasisTotal : 0;
+  const topThreeRatio =
+    holdingsBasisTotal > 0
+      ? sortedPositions.slice(0, 3).reduce((sum, position) => sum + getPositionBasisValue(position, analysisBasis), 0) / holdingsBasisTotal
+      : 0;
 
   const etfEquityData = useMemo(() => {
     const rows = [
@@ -124,16 +147,27 @@ export function Analytics({
     ];
     for (const position of filteredPositions) {
       const bucket = isEtfPosition(position) ? rows[0] : rows[1];
-      bucket.value = roundMoney(bucket.value + position.market_value);
+      bucket.value = roundMoney(bucket.value + getPositionBasisValue(position, analysisBasis));
     }
     return rows
       .filter((item) => item.value > 0)
       .map((item) => ({
         ...item,
-        ratio: holdingsValue > 0 ? item.value / holdingsValue : 0
+        ratio: holdingsBasisTotal > 0 ? item.value / holdingsBasisTotal : 0
       }));
-  }, [filteredPositions, holdingsValue]);
+  }, [filteredPositions, holdingsBasisTotal, analysisBasis]);
   const etfRatio = etfEquityData.find((item) => item.name === "ETF")?.ratio ?? 0;
+
+  const maxGainPosition = useMemo(() => {
+    if (!filteredPositions.length) return null;
+    return [...filteredPositions].sort((a, b) => b.unrealized_profit - a.unrealized_profit)[0] ?? null;
+  }, [filteredPositions]);
+
+  const maxLossPosition = useMemo(() => {
+    const losers = filteredPositions.filter((position) => position.unrealized_profit < 0);
+    if (!losers.length) return null;
+    return [...losers].sort((a, b) => a.unrealized_profit - b.unrealized_profit)[0] ?? null;
+  }, [filteredPositions]);
 
   const recentTrades = useMemo(() => {
     const windowDays = trendWindow === "14d" ? 14 : 30;
@@ -174,7 +208,7 @@ export function Analytics({
     };
   }, [recentTrades, stocks]);
 
-  const profitRows = useMemo(() => {
+  const stockProfitRows = useMemo(() => {
     const grouped = new Map<
       string,
       {
@@ -204,10 +238,73 @@ export function Analytics({
     }
 
     return [...grouped.values()]
-      .filter((item) => (profitMode === "realized" ? item.realized !== 0 : item.unrealized !== 0))
-      .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized))
-      .slice(0, 8);
+      .filter((item) => item.realized !== 0 || item.unrealized !== 0)
+      .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized));
   }, [filteredPositions, profitMode]);
+
+  const contributionRows = useMemo(() => {
+    const metricKey = profitMode === "realized" ? "realized" : "unrealized";
+
+    if (contributionGroup === "stock") {
+      return stockProfitRows.map((item) => ({
+        key: item.key,
+        label: item.label,
+        value: item[metricKey],
+        subtitle: metricKey === "realized" ? `市值 ${currency(item.marketValue)}` : `市值 ${currency(item.marketValue)} · 報酬率 ${percent(item.returnRate)}`
+      }));
+    }
+
+    if (contributionGroup === "industry") {
+      const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number }>();
+      for (const position of filteredPositions) {
+        const current = grouped.get(position.industry) ?? {
+          label: position.industry,
+          realized: 0,
+          unrealized: 0,
+          count: 0
+        };
+        current.realized = roundMoney(current.realized + position.realized_profit);
+        current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
+        current.count += 1;
+        grouped.set(position.industry, current);
+      }
+      return [...grouped.values()]
+        .filter((item) => item.realized !== 0 || item.unrealized !== 0)
+        .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized))
+        .map((item) => ({
+          key: item.label,
+          label: item.label,
+          value: item[metricKey],
+          subtitle: `涵蓋 ${item.count} 檔持股`
+        }));
+    }
+
+    const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number }>();
+    for (const position of filteredPositions) {
+      const tags = position.tags.length ? position.tags : ["未標籤"];
+      for (const tag of tags) {
+        const current = grouped.get(tag) ?? {
+          label: tag,
+          realized: 0,
+          unrealized: 0,
+          count: 0
+        };
+        current.realized = roundMoney(current.realized + position.realized_profit);
+        current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
+        current.count += 1;
+        grouped.set(tag, current);
+      }
+    }
+    return [...grouped.values()]
+      .filter((item) => item.realized !== 0 || item.unrealized !== 0)
+      .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized))
+      .map((item) => ({
+        key: item.label,
+        label: item.label,
+        value: item[metricKey],
+        subtitle: `涵蓋 ${item.count} 檔持股`
+      }));
+  }, [filteredPositions, profitMode, contributionGroup, stockProfitRows]);
 
   return (
     <div className="space-y-4">
@@ -233,7 +330,24 @@ export function Analytics({
         </label>
       </section>
 
-      <section className="grid grid-cols-3 gap-3">
+      <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="font-bold">分析口徑</h2>
+            <p className="mt-1 text-xs text-ink/50">切換目前配置要以持股市值或持有成本查看</p>
+          </div>
+          <div className="rounded-md bg-paper p-1 text-sm">
+            <button className={"rounded px-3 py-1.5 " + (analysisBasis === "marketValue" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setAnalysisBasis("marketValue")}>
+              持股市值
+            </button>
+            <button className={"rounded px-3 py-1.5 " + (analysisBasis === "holdingCost" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setAnalysisBasis("holdingCost")}>
+              持有成本
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 gap-3">
         <SmallCard
           label="最大單一持股"
           value={percent(topPositionRatio)}
@@ -241,11 +355,23 @@ export function Analytics({
         />
         <SmallCard label="前 3 大持股" value={percent(topThreeRatio)} hint="占總持股市值比例" />
         <SmallCard label="最大產業占比" value={percent(topIndustryRatio)} hint={industryData[0]?.name ?? "尚無資料"} />
+        <SmallCard
+          label="最大獲利部位"
+          value={maxGainPosition ? currency(maxGainPosition.unrealized_profit) : "—"}
+          valueClass={maxGainPosition ? profitClass(maxGainPosition.unrealized_profit) : ""}
+          hint={maxGainPosition ? `${maxGainPosition.symbol} ${maxGainPosition.name}` : "尚無資料"}
+        />
+        <SmallCard
+          label="最大虧損部位"
+          value={maxLossPosition ? currency(maxLossPosition.unrealized_profit) : "—"}
+          valueClass={maxLossPosition ? profitClass(maxLossPosition.unrealized_profit) : ""}
+          hint={maxLossPosition ? `${maxLossPosition.symbol} ${maxLossPosition.name}` : "尚無虧損部位"}
+        />
       </section>
 
-      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" />
-      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" />
-      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" />
+      <ChartCard title="產業持股比例" data={industryData} empty="尚無產業配置資料" basisLabel={basisLabel} />
+      <ChartCard title="標籤持股比例" data={tagData} empty="尚無標籤配置資料" basisLabel={basisLabel} />
+      <ChartCard title="ETF / 個股配置" data={etfEquityData} empty="尚無配置資料" basisLabel={basisLabel} />
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
         <div>
           <h2 className="font-bold">資產組成</h2>
@@ -269,18 +395,27 @@ export function Analytics({
           <MetricTile label="ETF 配置" value={percent(etfRatio)} />
         </div>
         <div className="mt-3 space-y-2">
-          {sortedPositions.slice(0, 5).map((position, index) => (
+          {sortedPositions.slice(0, concentrationVisibleCount).map((position, index) => (
             <div className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3 text-sm" key={position.stock_id}>
               <div className="min-w-0">
                 <p className="truncate font-semibold">
                   #{index + 1} {position.symbol} {position.name}
                 </p>
-                <p className="mt-1 truncate text-ink/55">{currency(position.market_value)} · {position.industry}</p>
+                <p className="mt-1 truncate text-ink/55">{currency(getPositionBasisValue(position, analysisBasis))} · {position.industry}</p>
               </div>
-              <p className="shrink-0 font-bold">{percent(holdingsValue > 0 ? position.market_value / holdingsValue : 0)}</p>
+              <p className="shrink-0 font-bold">{percent(holdingsBasisTotal > 0 ? getPositionBasisValue(position, analysisBasis) / holdingsBasisTotal : 0)}</p>
             </div>
           ))}
         </div>
+        {sortedPositions.length > 5 ? (
+          <ExpandControls
+            visibleCount={Math.min(concentrationVisibleCount, sortedPositions.length)}
+            totalCount={sortedPositions.length}
+            onExpandMore={() => setConcentrationVisibleCount((current) => Math.min(current + 5, sortedPositions.length))}
+            onExpandAll={() => setConcentrationVisibleCount(sortedPositions.length)}
+            onCollapse={() => setConcentrationVisibleCount(5)}
+          />
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
@@ -342,29 +477,46 @@ export function Analytics({
         </div>
       </section>
 
-      <ListSection title={profitMode === "realized" ? "已實現損益排行" : "未實現損益排行"} empty="尚無可顯示的損益資料">
-        <div className="rounded-md bg-paper p-1 text-sm">
-          <button className={"rounded px-3 py-1.5 " + (profitMode === "unrealized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("unrealized")}>
-            未實現
-          </button>
-          <button className={"rounded px-3 py-1.5 " + (profitMode === "realized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("realized")}>
-            已實現
-          </button>
+      <ListSection title="損益貢獻分析" empty="尚無可顯示的損益資料">
+        <div className="space-y-3">
+          <div className="rounded-md bg-paper p-1 text-sm">
+            <button className={"rounded px-3 py-1.5 " + (profitMode === "unrealized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("unrealized")}>
+              未實現
+            </button>
+            <button className={"rounded px-3 py-1.5 " + (profitMode === "realized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("realized")}>
+              已實現
+            </button>
+          </div>
+          <div className="rounded-md bg-paper p-1 text-sm">
+            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "stock" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("stock")}>
+              股票
+            </button>
+            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "industry" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("industry")}>
+              產業
+            </button>
+            <button className={"rounded px-3 py-1.5 " + (contributionGroup === "tag" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("tag")}>
+              標籤
+            </button>
+          </div>
         </div>
-        {profitRows.map((item) => {
-          const value = profitMode === "realized" ? item.realized : item.unrealized;
-          return (
-            <div key={item.key} className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3">
-              <div className="min-w-0">
-                <p className="truncate font-semibold">{item.label}</p>
-                <p className="mt-1 truncate text-sm text-ink/55">
-                  {profitMode === "realized" ? "已實現損益" : "市值 " + currency(item.marketValue) + " · 報酬率 " + percent(item.returnRate)}
-                </p>
-              </div>
-              <p className={"shrink-0 text-sm font-bold " + profitClass(value)}>{currency(value)}</p>
+        {contributionRows.slice(0, profitVisibleCount).map((item) => (
+          <div key={item.key} className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3">
+            <div className="min-w-0">
+              <p className="truncate font-semibold">{item.label}</p>
+              <p className="mt-1 truncate text-sm text-ink/55">{item.subtitle}</p>
             </div>
-          );
-        })}
+            <p className={"shrink-0 text-sm font-bold " + profitClass(item.value)}>{currency(item.value)}</p>
+          </div>
+        ))}
+        {contributionRows.length > 5 ? (
+          <ExpandControls
+            visibleCount={Math.min(profitVisibleCount, contributionRows.length)}
+            totalCount={contributionRows.length}
+            onExpandMore={() => setProfitVisibleCount((current) => Math.min(current + 5, contributionRows.length))}
+            onExpandAll={() => setProfitVisibleCount(contributionRows.length)}
+            onCollapse={() => setProfitVisibleCount(5)}
+          />
+        ) : null}
       </ListSection>
     </div>
   );
@@ -373,16 +525,20 @@ export function Analytics({
 function ChartCard({
   title,
   data,
-  empty
+  empty,
+  basisLabel
 }: {
   title: string;
   data: { name: string; value: number; ratio: number }[];
   empty: string;
+  basisLabel: string;
 }) {
   const [selectedName, setSelectedName] = useState<string>(data[0]?.name ?? "");
+  const [visibleCount, setVisibleCount] = useState(5);
 
   useEffect(() => {
     setSelectedName(data[0]?.name ?? "");
+    setVisibleCount(5);
   }, [data]);
 
   const selectedItem = data.find((item) => item.name === selectedName) ?? data[0];
@@ -391,7 +547,7 @@ function ChartCard({
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="font-bold">{title}</h2>
-          <p className="mt-1 text-xs text-ink/45">依目前範圍計算市值占比</p>
+          <p className="mt-1 text-xs text-ink/45">依目前範圍計算 {basisLabel} 占比</p>
         </div>
         <div className="rounded-full bg-paper px-3 py-1 text-xs font-semibold tabular-nums text-ink/55">{data.length} 類</div>
       </div>
@@ -430,13 +586,13 @@ function ChartCard({
                 <span className="rounded-full bg-mint/10 px-3 py-1.5 text-sm font-bold tabular-nums text-mint">{percent(selectedItem.ratio)}</span>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <MetricTile label="持股市值" value={currency(selectedItem.value)} />
+                <MetricTile label={basisLabel} value={currency(selectedItem.value)} />
                 <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
               </div>
             </div>
           ) : null}
           <div className="mt-3 space-y-2">
-            {data.slice(0, 6).map((item, index) => (
+            {data.slice(0, visibleCount).map((item, index) => (
               <button
                 type="button"
                 className={
@@ -457,6 +613,15 @@ function ChartCard({
               </button>
             ))}
           </div>
+          {data.length > 5 ? (
+            <ExpandControls
+              visibleCount={Math.min(visibleCount, data.length)}
+              totalCount={data.length}
+              onExpandMore={() => setVisibleCount((current) => Math.min(current + 5, data.length))}
+              onExpandAll={() => setVisibleCount(data.length)}
+              onCollapse={() => setVisibleCount(5)}
+            />
+          ) : null}
         </>
       ) : (
         <p className="mt-3 text-sm text-ink/55">{empty}</p>
@@ -470,6 +635,44 @@ function MetricTile({ label, value, valueClass = "" }: { label: string; value: s
     <div className="rounded-md bg-paper p-3">
       <p className="text-xs text-ink/55">{label}</p>
       <p className={"mt-1 text-sm font-bold " + valueClass}>{value}</p>
+    </div>
+  );
+}
+
+function ExpandControls({
+  visibleCount,
+  totalCount,
+  onExpandMore,
+  onExpandAll,
+  onCollapse
+}: {
+  visibleCount: number;
+  totalCount: number;
+  onExpandMore: () => void;
+  onExpandAll: () => void;
+  onCollapse: () => void;
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-ink/8 bg-paper/60 px-3 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-ink/55">目前顯示 {visibleCount} / {totalCount} 項</p>
+        <div className="flex flex-wrap justify-end gap-2 text-xs font-semibold">
+          {visibleCount < totalCount ? (
+            <>
+              <button className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-ink/75" onClick={onExpandMore}>
+                繼續展開 5 項
+              </button>
+              <button className="rounded-full border border-mint/15 bg-mint/5 px-3 py-1.5 text-mint" onClick={onExpandAll}>
+                全部展開
+              </button>
+            </>
+          ) : (
+            <button className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-ink/75" onClick={onCollapse}>
+              收合
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -488,4 +691,9 @@ function isEtfPosition(position: Position) {
 
 function isUuidLike(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function getPositionBasisValue(position: Position | undefined, basis: AnalysisBasis) {
+  if (!position) return 0;
+  return basis === "marketValue" ? position.market_value : position.holding_cost;
 }
