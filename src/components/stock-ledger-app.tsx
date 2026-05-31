@@ -985,6 +985,11 @@ export default function StockLedgerApp() {
     const stock = stocks.find((item) => item.id === parsed.stockId);
     if (!stock) return setFormError("找不到股票");
     if (parsed.quantity === 0 && parsed.holdingCost > 0) return setFormError("持有庫存為 0 時，持有成本也必須為 0。");
+    const nextStock: Stock = {
+      ...stock,
+      industry: parsed.industry?.trim() ? parsed.industry.trim() : null,
+      updated_at: new Date().toISOString()
+    };
     const nextAdjustment: PositionAdjustment = {
       id: positionAdjustments.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.id ?? uid(),
       user_id: userId ?? "demo",
@@ -995,6 +1000,12 @@ export default function StockLedgerApp() {
       created_at: positionAdjustments.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
+    const tagRows = parseTags(parsed.tags).map((name) => ({
+      id: uid(),
+      user_id: userId ?? "demo",
+      stock_id: stock.id,
+      name
+    }));
 
     if (supabase && hasSupabaseEnv) {
       const adjustmentQuery = supabase.from("position_adjustments");
@@ -1011,12 +1022,21 @@ export default function StockLedgerApp() {
           }
         }
       }
+      const { error: stockError } = await supabase.from("stocks").update({ industry: nextStock.industry, updated_at: nextStock.updated_at }).eq("id", stock.id);
+      if (stockError) return setFormError(toUserError(stockError, "更新股票產業別失敗。"));
+      await supabase.from("stock_tags").delete().eq("stock_id", stock.id);
+      if (tagRows.length) {
+        const { error: tagError } = await supabase.from("stock_tags").insert(tagRows);
+        if (tagError) return setFormError(toUserError(tagError, "更新股票標籤失敗。"));
+      }
     }
 
     setPositionAdjustments((current) => {
       const filtered = current.filter((item) => !(item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id));
       return parsed.quantity === 0 && parsed.holdingCost === 0 ? filtered : [...filtered, nextAdjustment];
     });
+    setStocks((current) => current.map((item) => (item.id === stock.id ? nextStock : item)));
+    setStockTags((current) => [...current.filter((item) => item.stock_id !== stock.id), ...tagRows]);
     setMessage(supabase && hasSupabaseEnv ? "成本校正已更新。" : "成本校正已更新。");
     setConfirmState(null);
     setSheetMode(null);
@@ -1140,6 +1160,13 @@ export default function StockLedgerApp() {
             updated_at: new Date().toISOString()
           };
           nextStocks.push(stock);
+        } else if (row.industry && row.industry !== stock.industry) {
+          stock = {
+            ...stock,
+            industry: row.industry,
+            updated_at: new Date().toISOString()
+          };
+          nextStocks = nextStocks.map((item) => (item.id === stock!.id ? stock! : item));
         }
 
         const createdAt = new Date().toISOString();

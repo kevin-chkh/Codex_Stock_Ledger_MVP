@@ -376,6 +376,18 @@ export function StockAdjustForm({
           <strong>{decimal(averageCost, 1)}</strong>
         </div>
       </section>
+      <Field
+        label="產業別"
+        value={draft.industry}
+        onChange={(industry) => setDraft((value) => ({ ...value, industry }))}
+        placeholder="半導體業 / ETF"
+      />
+      <Field
+        label="添加分類標籤"
+        value={draft.tags}
+        onChange={(tags) => setDraft((value) => ({ ...value, tags }))}
+        placeholder="核心, 長期, 短線"
+      />
       <section className="rounded-lg border border-gold/20 bg-gold/5 p-3 text-sm">
         <p className="font-semibold text-ink">校正前對照</p>
         <div className="mt-2 flex justify-between">

@@ -1,5 +1,8 @@
+"use client";
+
 import { CircleHelp } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 
 export function Metric({ label, value, strong, className = "" }: { label: string; value: string; strong?: boolean; className?: string }) {
   return (
@@ -122,20 +125,30 @@ export function Field({
 }
 
 export function InfoTip({ label, body }: { label: string; body: string[] }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <details className="group relative inline-block">
-      <summary aria-label={label} className="list-none cursor-pointer text-white/55 transition hover:text-white/80">
+    <>
+      <button aria-label={label} className="inline-flex text-white/55 transition hover:text-white/80" onClick={() => setOpen(true)}>
         <CircleHelp size={14} />
-      </summary>
-      <div className="absolute right-0 z-20 mt-2 w-56 rounded-md border border-ink/10 bg-white p-3 text-left text-xs leading-5 text-ink shadow-soft">
-        <p className="font-semibold text-ink">{label}</p>
-        <div className="mt-2 space-y-1">
-          {body.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
+      </button>
+      {open ? (
+        <div className="fixed inset-0 z-50 flex items-end bg-ink/35" onClick={() => setOpen(false)}>
+          <section className="mx-auto w-full max-w-2xl rounded-t-3xl bg-white p-4 shadow-soft" onClick={(event) => event.stopPropagation()}>
+            <div className="mx-auto h-1.5 w-10 rounded-full bg-ink/10" />
+            <p className="mt-4 text-sm font-semibold text-ink">{label}</p>
+            <div className="mt-3 space-y-2 text-sm leading-6 text-ink/65">
+              {body.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+            <button className="mt-4 w-full rounded-xl bg-ink px-4 py-3 text-sm font-semibold text-white" onClick={() => setOpen(false)}>
+              知道了
+            </button>
+          </section>
         </div>
-      </div>
-    </details>
+      ) : null}
+    </>
   );
 }
 
