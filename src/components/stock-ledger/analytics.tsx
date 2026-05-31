@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { currency, percent, profitClass } from "@/lib/format";
 import { groupByValue, roundMoney } from "@/lib/calculations";
 import type { Portfolio, Position, Stock, Trade } from "@/lib/types";
@@ -52,6 +52,10 @@ export function Analytics({
   const filteredPositions = useMemo(
     () => (tagFilter === "all" ? openPositions : openPositions.filter((position) => position.tags.includes(tagFilter))),
     [openPositions, tagFilter]
+  );
+  const filteredProfitPositions = useMemo(
+    () => (tagFilter === "all" ? positions : positions.filter((position) => position.tags.includes(tagFilter))),
+    [positions, tagFilter]
   );
 
   useEffect(() => {
@@ -181,7 +185,8 @@ export function Analytics({
       { name: "ETF", value: 0 },
       { name: "個股", value: 0 }
     ];
-    for (const position of filteredPositions) {
+    const sourcePositions = profitMode === "realized" ? filteredProfitPositions : filteredPositions;
+    for (const position of sourcePositions) {
       const bucket = isEtfPosition(position) ? rows[0] : rows[1];
       bucket.value = roundMoney(bucket.value + getPositionBasisValue(position, analysisBasis));
     }
@@ -304,7 +309,7 @@ export function Analytics({
     return [...grouped.values()]
       .filter((item) => item.realized !== 0 || item.unrealized !== 0)
       .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized));
-  }, [filteredPositions, profitMode]);
+  }, [filteredPositions, filteredProfitPositions, profitMode]);
 
   const contributionRows = useMemo(() => {
     const metricKey = profitMode === "realized" ? "realized" : "unrealized";
@@ -320,7 +325,8 @@ export function Analytics({
 
     if (contributionGroup === "industry") {
       const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number }>();
-      for (const position of filteredPositions) {
+      const sourcePositions = profitMode === "realized" ? filteredProfitPositions : filteredPositions;
+      for (const position of sourcePositions) {
         const current = grouped.get(position.industry) ?? {
           label: position.industry,
           realized: 0,
@@ -344,7 +350,8 @@ export function Analytics({
     }
 
     const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number }>();
-    for (const position of filteredPositions) {
+    const sourcePositions = profitMode === "realized" ? filteredProfitPositions : filteredPositions;
+    for (const position of sourcePositions) {
       const tags = position.tags.length ? position.tags : ["未標籤"];
       for (const tag of tags) {
         const current = grouped.get(tag) ?? {
@@ -368,7 +375,7 @@ export function Analytics({
         value: item[metricKey],
         subtitle: `涵蓋 ${item.count} 檔持股`
       }));
-  }, [filteredPositions, profitMode, contributionGroup, stockProfitRows]);
+  }, [filteredPositions, filteredProfitPositions, profitMode, contributionGroup, stockProfitRows]);
 
   return (
     <div className="space-y-4">
@@ -709,43 +716,84 @@ function ChartCard({
         )
       }
     >
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-ink/50">點擊分類可展開或收合持股明細</p>
         <div className="rounded-full bg-paper px-3 py-1 text-xs font-semibold tabular-nums text-ink/55">{data.length} 類</div>
       </div>
       {data.length ? (
         <>
-          <div className="mt-4 rounded-xl bg-paper/55 px-4 py-5">
-            <div className="h-60">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={data}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={56}
-                    outerRadius={92}
-                    paddingAngle={3}
-                    stroke="#f7f4ee"
-                    strokeWidth={3}
-                    onClick={(_, index) => {
-                      const name = data[index]?.name ?? "";
-                      if (name) toggleSelection(name);
-                    }}
-                  >
-                    {data.map((entry, index) => (
-                      <Cell key={entry.name} fill={colors[index % colors.length]} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
+          <div className="mt-4 space-y-2">
+            {data.slice(0, visibleCount).map((item, index) => {
+              const itemDetails = details[item.name] ?? [];
+              const isSelected = selectedName === item.name;
+              return (
+                <div
+                  className={
+                    "rounded-xl border px-3 py-3 shadow-[0_1px_0_rgba(10,10,10,0.02)] " +
+                    (isSelected ? "border-mint/20 bg-mint/5" : "border-ink/5 bg-white")
+                  }
+                  key={item.name}
+                >
+                  <button type="button" className="w-full text-left" onClick={() => toggleSelection(item.name)}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
+                        <span className="min-w-0">
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate text-sm font-semibold text-ink">{item.name}</span>
+                            <span className="shrink-0 text-ink/45">{isSelected ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</span>
+                          </span>
+                          <span className="mt-0.5 block text-xs tabular-nums text-ink/45">
+                            {currency(item.value)} · {itemDetails.length} 檔
+                          </span>
+                        </span>
+                      </span>
+                      <span className="shrink-0 rounded-full bg-paper px-3 py-1.5 text-sm font-bold tabular-nums text-ink">{percent(item.ratio)}</span>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-paper">
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(100, item.ratio * 100)}%`, backgroundColor: colors[index % colors.length] }} />
+                    </div>
+                  </button>
+                  {isSelected ? (
+                    <div className="mt-3 rounded-xl border border-ink/8 bg-paper/45 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-ink">持股明細</p>
+                        <p className="text-xs text-ink/45">共 {itemDetails.length} 檔</p>
+                      </div>
+                      {itemDetails.length ? (
+                        <div className="mt-3 space-y-2">
+                          {itemDetails.map((detail) => (
+                            <div key={detail.key} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-ink">
+                                  {detail.symbol} {detail.name}
+                                </p>
+                                <p className="mt-1 truncate text-xs text-ink/45">{detail.quantityText} · {basisLabel} {currency(detail.basisValue)}</p>
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <span className="inline-flex rounded-full bg-mint/10 px-2.5 py-1 text-xs font-bold tabular-nums text-mint">
+                                  {percent(detail.ratioOfGroup)}
+                                </span>
+                                <p className="mt-1 text-xs text-ink/45">占此類別</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-3 text-sm text-ink/55">尚無持股明細</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
           {selectedItem ? (
-            <div className="mt-4 rounded-2xl border border-mint/15 bg-white p-4">
+            <div className="mt-3 rounded-xl border border-mint/15 bg-mint/5 p-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-semibold text-ink">{selectedItem.name}</p>
-                  <p className="mt-1 text-xs text-ink/45">目前選取扇區摘要</p>
+                  <p className="mt-1 text-xs text-ink/45">目前展開分類摘要</p>
                 </div>
                 <span className="rounded-full bg-mint/10 px-3 py-1.5 text-sm font-bold tabular-nums text-mint">{percent(selectedItem.ratio)}</span>
               </div>
@@ -754,56 +802,8 @@ function ChartCard({
                 <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
                 <MetricTile label="持股檔數" value={`${selectedDetails.length} 檔`} />
               </div>
-              {selectedDetails.length ? (
-                <div className="mt-4 rounded-xl border border-ink/8 bg-paper/45 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold text-ink">持股明細</p>
-                    <p className="text-xs text-ink/45">共 {selectedDetails.length} 檔</p>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {selectedDetails.map((detail) => (
-                      <div key={detail.key} className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-ink">
-                            {detail.symbol} {detail.name}
-                          </p>
-                          <p className="mt-1 truncate text-xs text-ink/45">{detail.quantityText} · {basisLabel} {currency(detail.basisValue)}</p>
-                        </div>
-                        <div className="shrink-0 text-right">
-                          <span className="inline-flex rounded-full bg-mint/10 px-2.5 py-1 text-xs font-bold tabular-nums text-mint">
-                            {percent(detail.ratioOfGroup)}
-                          </span>
-                          <p className="mt-1 text-xs text-ink/45">占此類別</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </div>
           ) : null}
-          <div className="mt-3 space-y-2">
-            {data.slice(0, visibleCount).map((item, index) => (
-              <button
-                type="button"
-                className={
-                  "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-sm shadow-[0_1px_0_rgba(10,10,10,0.02)] " +
-                  (selectedName === item.name ? "border-mint/20 bg-mint/5" : "border-ink/5 bg-white")
-                }
-                key={item.name}
-                onClick={() => toggleSelection(item.name)}
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
-                  <span className="min-w-0">
-                    <span className="block truncate text-[13px] font-semibold text-ink">{item.name}</span>
-                    <span className="mt-0.5 block text-xs tabular-nums text-ink/45">{currency(item.value)}</span>
-                  </span>
-                </span>
-                <span className="shrink-0 rounded-full bg-paper px-2.5 py-1 text-right text-[13px] font-semibold tabular-nums text-ink">{percent(item.ratio)}</span>
-              </button>
-            ))}
-          </div>
           {data.length > 5 ? (
             <ExpandControls
               visibleCount={Math.min(visibleCount, data.length)}

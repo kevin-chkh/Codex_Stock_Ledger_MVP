@@ -230,4 +230,36 @@ describe("calculateDashboardMetrics", () => {
     expect(metrics.unrealizedProfit).toBe(980);
     expect(metrics.totalReturnRate).toBe(0.0098);
   });
+
+  it("uses only current inventory holding cost for dashboard holding cost", () => {
+    const portfolio: Portfolio = {
+      id: "portfolio-1",
+      user_id: "user-1",
+      name: "台股主帳本",
+      currency: "TWD",
+      initial_amount: 100000,
+      cash_balance: 50000,
+      total_deposits: 100000,
+      total_withdrawals: 0,
+      note: null,
+      created_at: "",
+      updated_at: ""
+    };
+
+    const openPosition = buildPositions([trade({ quantity: 100, net_amount: 10020 })], [stock])[0];
+    const soldOutPosition = {
+      ...openPosition,
+      quantity: 0,
+      holding_cost: 99999,
+      market_value: 99999,
+      unrealized_profit: 99999,
+      realized_profit: 1200
+    };
+    const metrics = calculateDashboardMetrics([portfolio], [openPosition, soldOutPosition]);
+
+    expect(metrics.holdingCost).toBe(10020);
+    expect(metrics.holdingsValue).toBe(11000);
+    expect(metrics.unrealizedProfit).toBe(980);
+    expect(metrics.realizedProfit).toBe(1200);
+  });
 });

@@ -74,6 +74,7 @@ type ConfirmState =
   | { kind: "deleteTrade"; trade: Trade }
   | { kind: "deletePortfolio"; portfolio: Portfolio }
   | { kind: "importCsv"; file: File; totalRows: number }
+  | { kind: "importHoldingsCsv"; file: File; totalRows: number }
   | { kind: "importJson"; snapshot: LocalSnapshot }
   | { kind: "renamePortfolio" }
   | { kind: "cashMovement" }
@@ -1336,6 +1337,179 @@ export default function StockLedgerApp() {
     }
   }
 
+  async function importHoldingsCsv(file: File) {
+    setFormError("");
+    try {
+      const text = await file.text();
+      const rows = parseCsv(text);
+      if (rows.length < 2) return setFormError("CSV 內容為空。");
+
+      const header = rows[0].map((value) => value.trim());
+      const required = ["帳本", "股票代號", "股票名稱", "持有股數", "持有成本"];
+      const missing = required.filter((field) => !header.includes(field));
+      if (missing.length) return setFormError("CSV 欄位缺少：" + missing.join("、"));
+
+      const headerIndex = new Map(header.map((name, index) => [name, index]));
+      const parsedRows = rows
+        .slice(1)
+        .map((row, index) => ({ row, line: index + 2 }))
+        .filter(({ row }) => row.some((cell) => cell.trim()))
+        .map(({ row, line }) => ({
+          line,
+          raw: row,
+          portfolioName: (row[headerIndex.get("帳本") ?? -1] || "").trim(),
+          symbol: (row[headerIndex.get("股票代號") ?? -1] || "").trim(),
+          name: (row[headerIndex.get("股票名稱") ?? -1] || "").trim(),
+          quantity: Number((row[headerIndex.get("持有股數") ?? -1] || "").replace(/,/g, "")),
+          holdingCost: Number((row[headerIndex.get("持有成本") ?? -1] || "").replace(/,/g, "")),
+          currentPrice: Number((row[headerIndex.get("目前價格") ?? -1] || "").replace(/,/g, "")),
+          industry: (row[headerIndex.get("產業別") ?? -1] || "").trim(),
+          tags: (row[headerIndex.get("標籤") ?? -1] || "").trim()
+        }));
+
+      let nextStocks = [...stocks];
+      let nextAdjustments = [...positionAdjustments];
+      let nextTags = [...stockTags];
+      const skipped: CsvImportSummary["skipped"] = [];
+      const affectedStockIds = new Set<string>();
+      const deletedAdjustmentKeys = new Set<string>();
+      const now = new Date().toISOString();
+
+      for (const row of parsedRows) {
+        if (!row.portfolioName || !row.symbol || !row.name || !Number.isFinite(row.quantity) || !Number.isFinite(row.holdingCost) || row.quantity < 0 || row.holdingCost < 0) {
+          skipped.push({ line: row.line, reason: "欄位缺漏或數值格式錯誤", raw: row.raw });
+          continue;
+        }
+        const portfolio = portfolios.find((item) => item.name === row.portfolioName);
+        if (!portfolio) {
+          skipped.push({ line: row.line, reason: "找不到對應帳本名稱", raw: row.raw });
+          continue;
+        }
+        if (row.quantity === 0 && row.holdingCost > 0) {
+          skipped.push({ line: row.line, reason: "持有股數為 0 時，持有成本必須為 0", raw: row.raw });
+          continue;
+        }
+
+        const catalogMatch = catalogBySymbol.get(row.symbol);
+        let stock = nextStocks.find((item) => item.symbol === row.symbol);
+        const nextPrice = Number.isFinite(row.currentPrice) && row.currentPrice > 0 ? row.currentPrice : stock?.current_price ?? 0;
+        if (!stock) {
+          stock = {
+            id: uid(),
+            user_id: userId ?? "demo",
+            symbol: row.symbol,
+            name: row.name,
+            market: catalogMatch?.market || "TWSE",
+            industry: row.industry || catalogMatch?.industry || null,
+            current_price: nextPrice,
+            price_updated_at: nextPrice > 0 ? now : null,
+            created_at: now,
+            updated_at: now
+          };
+          nextStocks.push(stock);
+        } else {
+          stock = {
+            ...stock,
+            name: row.name || stock.name,
+            market: stock.market || catalogMatch?.market || "TWSE",
+            industry: row.industry || stock.industry || catalogMatch?.industry || null,
+            current_price: nextPrice,
+            price_updated_at: nextPrice > 0 ? now : stock.price_updated_at,
+            updated_at: now
+          };
+          nextStocks = nextStocks.map((item) => (item.id === stock!.id ? stock! : item));
+        }
+
+        const oldAdjustment = nextAdjustments.find((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id);
+        const nextAdjustment: PositionAdjustment = {
+          id: oldAdjustment?.id ?? uid(),
+          user_id: userId ?? "demo",
+          portfolio_id: portfolio.id,
+          stock_id: stock.id,
+          adjusted_quantity: row.quantity,
+          adjusted_cost: row.holdingCost,
+          created_at: oldAdjustment?.created_at ?? now,
+          updated_at: now
+        };
+        nextAdjustments = nextAdjustments.filter((item) => !(item.portfolio_id === portfolio.id && item.stock_id === stock!.id));
+        if (row.quantity === 0 && row.holdingCost === 0) {
+          deletedAdjustmentKeys.add(`${portfolio.id}:${stock.id}`);
+        } else {
+          nextAdjustments.push(nextAdjustment);
+        }
+
+        const tagRows = parseTags(row.tags).map((name) => ({
+          id: uid(),
+          user_id: userId ?? "demo",
+          stock_id: stock!.id,
+          name
+        }));
+        nextTags = [...nextTags.filter((item) => item.stock_id !== stock!.id), ...tagRows];
+        affectedStockIds.add(stock.id);
+      }
+
+      if (supabase && hasSupabaseEnv) {
+        const newStocks = nextStocks.filter((stock) => !stocks.some((old) => old.id === stock.id));
+        const updatedStocks = nextStocks.filter((stock) => {
+          const old = stocks.find((item) => item.id === stock.id);
+          return old && affectedStockIds.has(stock.id);
+        });
+        if (newStocks.length) {
+          const { error } = await supabase.from("stocks").insert(newStocks);
+          if (error) return setFormError(toUserError(error, "匯入持股股票資料失敗。"));
+        }
+        for (const stock of updatedStocks) {
+          const { error } = await supabase
+            .from("stocks")
+            .update({ name: stock.name, market: stock.market, industry: stock.industry, current_price: stock.current_price, price_updated_at: stock.price_updated_at, updated_at: stock.updated_at })
+            .eq("id", stock.id);
+          if (error) return setFormError(toUserError(error, "更新持股股票資料失敗。"));
+        }
+        for (const adjustment of nextAdjustments.filter((item) => affectedStockIds.has(item.stock_id))) {
+          const { error } = await supabase.from("position_adjustments").upsert(adjustment);
+          if (error && !String(error.message).includes("position_adjustments")) return setFormError(toUserError(error, "匯入持股校正資料失敗。"));
+        }
+        for (const key of deletedAdjustmentKeys) {
+          const [portfolioId, stockId] = key.split(":");
+          const { error } = await supabase.from("position_adjustments").delete().eq("portfolio_id", portfolioId).eq("stock_id", stockId);
+          if (error && !String(error.message).includes("position_adjustments")) return setFormError(toUserError(error, "清除持股校正資料失敗。"));
+        }
+        for (const stockId of affectedStockIds) {
+          await supabase.from("stock_tags").delete().eq("stock_id", stockId);
+        }
+        const affectedTags = nextTags.filter((tag) => affectedStockIds.has(tag.stock_id));
+        if (affectedTags.length) {
+          const { error } = await supabase.from("stock_tags").insert(affectedTags);
+          if (error) return setFormError(toUserError(error, "匯入持股標籤失敗。"));
+        }
+      }
+
+      setStocks(nextStocks);
+      setPositionAdjustments(nextAdjustments);
+      setStockTags(nextTags);
+      setMessage("持股匯入成功：更新 " + affectedStockIds.size + " 檔、略過 " + skipped.length + " 筆。");
+    } catch (error) {
+      console.error("Failed to import holdings CSV", error);
+      setFormError("持股 CSV 解析失敗，請確認格式與欄位。");
+    }
+  }
+
+  async function requestImportHoldingsCsv(file: File) {
+    setFormError("");
+    try {
+      const text = await file.text();
+      const rows = parseCsv(text);
+      if (rows.length < 2) return setFormError("CSV 內容為空。");
+      const totalRows = rows
+        .slice(1)
+        .filter((row) => row.some((cell) => cell.trim())).length;
+      setConfirmState({ kind: "importHoldingsCsv", file, totalRows });
+    } catch (error) {
+      console.error("Failed to inspect holdings CSV", error);
+      setFormError("持股 CSV 讀取失敗，請確認檔案格式。");
+    }
+  }
+
   function resetLocalDemoData() {
     const confirmed = window.confirm("確定要清除本機資料並重新載入 demo？此動作不會影響 Supabase。");
     if (!confirmed) return;
@@ -1465,6 +1639,7 @@ export default function StockLedgerApp() {
             selectedPortfolioId={activePortfolioId}
             onPortfolioChange={setSelectedPortfolioId}
             onAdjustCost={openStockAdjustEditor}
+            onImportCsv={requestImportHoldingsCsv}
           />
         )}
         {activeTab === "analytics" && (
@@ -1622,6 +1797,17 @@ export default function StockLedgerApp() {
           tone="primary"
           onCancel={() => setConfirmState(null)}
           onConfirm={() => void importTradesCsv(confirmState.file).finally(() => setConfirmState(null))}
+        />
+      )}
+
+      {confirmState?.kind === "importHoldingsCsv" && (
+        <ConfirmSheet
+          title="匯入持股 CSV"
+          body={`檔案：${confirmState.file.name}。資料筆數：${confirmState.totalRows} 筆。確認後會更新目前持股庫存、持有成本、產業別與標籤；此操作不會新增交易紀錄。`}
+          confirmLabel="確認匯入"
+          tone="primary"
+          onCancel={() => setConfirmState(null)}
+          onConfirm={() => void importHoldingsCsv(confirmState.file).finally(() => setConfirmState(null))}
         />
       )}
 
