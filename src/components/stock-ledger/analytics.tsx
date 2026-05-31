@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { currency, percent, profitClass } from "@/lib/format";
 import { groupByValue, roundMoney } from "@/lib/calculations";
@@ -379,7 +379,13 @@ function ChartCard({
   data: { name: string; value: number; ratio: number }[];
   empty: string;
 }) {
-  const lead = data[0];
+  const [selectedName, setSelectedName] = useState<string>(data[0]?.name ?? "");
+
+  useEffect(() => {
+    setSelectedName(data[0]?.name ?? "");
+  }, [data]);
+
+  const selectedItem = data.find((item) => item.name === selectedName) ?? data[0];
   return (
     <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
       <div className="flex items-center justify-between gap-3">
@@ -392,31 +398,54 @@ function ChartCard({
       {data.length ? (
         <>
           <div className="mt-4 rounded-xl bg-paper/55 px-4 py-5">
-            <div className="relative h-60">
+            <div className="h-60">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={data} dataKey="value" nameKey="name" innerRadius={56} outerRadius={92} paddingAngle={3} stroke="#f7f4ee" strokeWidth={3}>
+                  <Pie
+                    data={data}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={56}
+                    outerRadius={92}
+                    paddingAngle={3}
+                    stroke="#f7f4ee"
+                    strokeWidth={3}
+                    onClick={(_, index) => setSelectedName(data[index]?.name ?? "")}
+                  >
                     {data.map((entry, index) => (
                       <Cell key={entry.name} fill={colors[index % colors.length]} />
                     ))}
                   </Pie>
-                  <Tooltip content={<DonutTooltip />} />
                 </PieChart>
               </ResponsiveContainer>
-              {lead ? (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="min-w-[7rem] rounded-full bg-white/95 px-4 py-3 text-center shadow-soft ring-1 ring-ink/5">
-                    <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink/40">最大占比</p>
-                    <p className="mt-1 text-xl font-bold tabular-nums text-ink">{percent(lead.ratio)}</p>
-                    <p className="mt-1 truncate text-xs font-medium text-ink/55">{lead.name}</p>
-                  </div>
-                </div>
-              ) : null}
             </div>
           </div>
+          {selectedItem ? (
+            <div className="mt-4 rounded-2xl border border-mint/15 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-ink">{selectedItem.name}</p>
+                  <p className="mt-1 text-xs text-ink/45">目前選取扇區明細</p>
+                </div>
+                <span className="rounded-full bg-mint/10 px-3 py-1.5 text-sm font-bold tabular-nums text-mint">{percent(selectedItem.ratio)}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <MetricTile label="持股市值" value={currency(selectedItem.value)} />
+                <MetricTile label="配置占比" value={percent(selectedItem.ratio)} />
+              </div>
+            </div>
+          ) : null}
           <div className="mt-3 space-y-2">
             {data.slice(0, 6).map((item, index) => (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-ink/5 bg-white px-3 py-3 text-sm shadow-[0_1px_0_rgba(10,10,10,0.02)]" key={item.name}>
+              <button
+                type="button"
+                className={
+                  "flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left text-sm shadow-[0_1px_0_rgba(10,10,10,0.02)] " +
+                  (selectedItem?.name === item.name ? "border-mint/20 bg-mint/5" : "border-ink/5 bg-white")
+                }
+                key={item.name}
+                onClick={() => setSelectedName(item.name)}
+              >
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
                   <span className="min-w-0">
@@ -425,7 +454,7 @@ function ChartCard({
                   </span>
                 </span>
                 <span className="shrink-0 rounded-full bg-paper px-2.5 py-1 text-right text-[13px] font-semibold tabular-nums text-ink">{percent(item.ratio)}</span>
-              </div>
+              </button>
             ))}
           </div>
         </>
@@ -433,24 +462,6 @@ function ChartCard({
         <p className="mt-3 text-sm text-ink/55">{empty}</p>
       )}
     </section>
-  );
-}
-
-function DonutTooltip({
-  active,
-  payload
-}: {
-  active?: boolean;
-  payload?: { payload?: { name?: string; value?: number; ratio?: number } }[];
-}) {
-  if (!active || !payload?.[0]?.payload) return null;
-  const item = payload[0].payload;
-  return (
-    <div className="rounded-lg bg-ink px-3 py-2 text-xs text-white shadow-soft">
-      <p className="font-semibold">{item.name}</p>
-      <p className="mt-1 tabular-nums text-white/90">{currency(Number(item.value || 0))}</p>
-      <p className="mt-1 tabular-nums text-white/70">占比 {percent(Number(item.ratio || 0))}</p>
-    </div>
   );
 }
 
