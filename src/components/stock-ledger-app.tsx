@@ -329,8 +329,21 @@ export default function StockLedgerApp() {
       const result = await loadStockCatalog();
       setStockCatalog(result.catalog);
       setCatalogSource(result.source);
-      const normalizedNameBySymbol = new Map(result.catalog.map((item) => [item.symbol, item.name]));
-      setStocks((current) => current.map((stock) => (normalizedNameBySymbol.has(stock.symbol) ? { ...stock, name: normalizedNameBySymbol.get(stock.symbol) ?? stock.name } : stock)));
+      const catalogBySymbol = new Map(result.catalog.map((item) => [item.symbol, item]));
+      setStocks((current) =>
+        current.map((stock) => {
+          const catalogItem = catalogBySymbol.get(stock.symbol);
+          if (!catalogItem) return stock;
+          return {
+            ...stock,
+            name: catalogItem.name || stock.name,
+            industry:
+              stock.industry && stock.industry !== "未分類"
+                ? stock.industry
+                : catalogItem.industry || stock.industry
+          };
+        })
+      );
       if (showResultMessage) {
         const sourceLabel = result.source === "api" ? "API" : result.source === "cache" ? "本地快取" : "fallback";
         setMessage("股票目錄已更新，來源：" + sourceLabel + "，共 " + result.catalog.length + " 檔。");
@@ -1205,6 +1218,14 @@ export default function StockLedgerApp() {
       if (supabase && hasSupabaseEnv) {
         const client = supabase;
         await Promise.all(nextStocks.filter((stock) => !stocks.some((old) => old.id === stock.id)).map((stock) => client.from("stocks").insert(stock)));
+        await Promise.all(
+          nextStocks
+            .filter((stock) => {
+              const old = stocks.find((item) => item.id === stock.id);
+              return old && old.industry !== stock.industry;
+            })
+            .map((stock) => client.from("stocks").update({ industry: stock.industry, updated_at: stock.updated_at }).eq("id", stock.id))
+        );
         await client.from("trades").insert(nextTrades.filter((trade) => !trades.some((old) => old.id === trade.id)));
         for (const portfolio of nextPortfolios) {
           const old = portfolios.find((item) => item.id === portfolio.id);
