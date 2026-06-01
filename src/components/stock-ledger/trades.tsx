@@ -1,6 +1,7 @@
 import { Download, Pencil, Search, Trash2, Upload } from "lucide-react";
 import { useMemo, useState } from "react";
-import { currency } from "@/lib/format";
+import { compareTradesChronologically, roundMoney } from "@/lib/calculations";
+import { currency, profitClass } from "@/lib/format";
 import type { Portfolio, Stock, Trade, TradeType } from "@/lib/types";
 import { ListSection } from "./ui";
 
@@ -33,6 +34,7 @@ export function Trades({
   const [sortBy, setSortBy] = useState<"dateDesc" | "dateAsc" | "amountDesc">("dateDesc");
   const stockMap = useMemo(() => new Map(stocks.map((stock) => [stock.id, stock])), [stocks]);
   const portfolioMap = useMemo(() => new Map(portfolios.map((portfolio) => [portfolio.id, portfolio.name])), [portfolios]);
+  const realizedByTradeId = useMemo(() => buildRealizedTradeMap(trades), [trades]);
   const filteredTrades = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return [...trades]
@@ -165,6 +167,7 @@ export function Trades({
               title={(stock?.symbol ?? "") + " " + (stock?.name ?? "")}
               subtitle={(portfolioMap.get(trade.portfolio_id) ?? "") + " · " + trade.quantity + " 股 x " + currency(trade.unit_price) + " · 手續費 " + currency(trade.fee)}
               right={currency(trade.net_amount)}
+              realized={realizedByTradeId.get(trade.id) ?? null}
               onEdit={onEdit}
               onDelete={onDelete}
             />
@@ -227,6 +230,7 @@ function TradeRow({
   title,
   subtitle,
   right,
+  realized,
   onEdit,
   onDelete
 }: {
@@ -235,6 +239,7 @@ function TradeRow({
   title: string;
   subtitle: string;
   right: string;
+  realized: RealizedTradeResult | null;
   onEdit: (trade: Trade) => void;
   onDelete: (trade: Trade) => void;
 }) {
@@ -257,6 +262,18 @@ function TradeRow({
         </div>
         <p className="shrink-0 text-sm font-bold text-ink">{right}</p>
       </div>
+      {type === "sell" && realized ? (
+        <div className="mt-3 rounded-md bg-paper px-3 py-2">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-ink/60">已實現損益</span>
+            <strong className={profitClass(realized.profit)}>{currency(realized.profit)}</strong>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-3 text-sm">
+            <span className="text-ink/60">報酬率</span>
+            <strong className={profitClass(realized.profit)}>{(realized.returnRate * 100).toFixed(2)}%</strong>
+          </div>
+        </div>
+      ) : null}
       <div className="mt-3 flex gap-2">
         <button className="flex items-center gap-1 rounded-md border border-ink/10 px-3 py-2 text-sm" onClick={() => onEdit(trade)}>
           <Pencil size={15} />
@@ -274,4 +291,39 @@ function TradeRow({
 function csvCell(value: string | number) {
   const text = String(value);
   return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+type RealizedTradeResult = {
+  profit: number;
+  returnRate: number;
+};
+
+function buildRealizedTradeMap(trades: Trade[]) {
+  const stateByKey = new Map<string, { quantity: number; cost: number }>();
+  const realizedByTradeId = new Map<string, RealizedTradeResult>();
+
+  for (const trade of [...trades].sort(compareTradesChronologically)) {
+    const key = `${trade.portfolio_id}:${trade.stock_id}`;
+    const state = stateByKey.get(key) ?? { quantity: 0, cost: 0 };
+
+    if (trade.type === "buy") {
+      state.quantity = roundMoney(state.quantity + trade.quantity);
+      state.cost = roundMoney(state.cost + trade.net_amount);
+      stateByKey.set(key, state);
+      continue;
+    }
+
+    const averageCost = state.quantity > 0 ? state.cost / state.quantity : 0;
+    const soldCost = roundMoney(averageCost * trade.quantity);
+    const profit = roundMoney(trade.net_amount - soldCost);
+    realizedByTradeId.set(trade.id, {
+      profit,
+      returnRate: soldCost > 0 ? profit / soldCost : 0
+    });
+    state.quantity = roundMoney(state.quantity - trade.quantity);
+    state.cost = roundMoney(state.cost - soldCost);
+    stateByKey.set(key, state);
+  }
+
+  return realizedByTradeId;
 }

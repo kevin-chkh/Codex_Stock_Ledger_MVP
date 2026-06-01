@@ -99,29 +99,92 @@ alter table public.trades enable row level security;
 alter table public.position_adjustments enable row level security;
 alter table public.settings enable row level security;
 
-create policy "profiles own rows" on public.profiles
-  for all using (auth.uid() = id) with check (auth.uid() = id);
+alter table public.settings
+alter column fee_rate set default 0.0012825;
 
-create policy "portfolios own rows" on public.portfolios
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+update public.settings
+set fee_rate = 0.0012825
+where fee_rate = 0.001425;
 
-create policy "cash movements own rows" on public.cash_movements
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'position_adjustments_user_id_portfolio_id_stock_id_key'
+  ) then
+    alter table public.position_adjustments
+    add constraint position_adjustments_user_id_portfolio_id_stock_id_key
+    unique (user_id, portfolio_id, stock_id);
+  end if;
+end $$;
 
-create policy "stocks own rows" on public.stocks
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'profiles' and policyname = 'profiles own rows'
+  ) then
+    create policy "profiles own rows" on public.profiles
+      for all using (auth.uid() = id) with check (auth.uid() = id);
+  end if;
 
-create policy "stock tags own rows" on public.stock_tags
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'portfolios' and policyname = 'portfolios own rows'
+  ) then
+    create policy "portfolios own rows" on public.portfolios
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
 
-create policy "trades own rows" on public.trades
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'cash_movements' and policyname = 'cash movements own rows'
+  ) then
+    create policy "cash movements own rows" on public.cash_movements
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
 
-create policy "position adjustments own rows" on public.position_adjustments
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'stocks' and policyname = 'stocks own rows'
+  ) then
+    create policy "stocks own rows" on public.stocks
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
 
-create policy "settings own rows" on public.settings
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'stock_tags' and policyname = 'stock tags own rows'
+  ) then
+    create policy "stock tags own rows" on public.stock_tags
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'trades' and policyname = 'trades own rows'
+  ) then
+    create policy "trades own rows" on public.trades
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'position_adjustments' and policyname = 'position adjustments own rows'
+  ) then
+    create policy "position adjustments own rows" on public.position_adjustments
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'settings' and policyname = 'settings own rows'
+  ) then
+    create policy "settings own rows" on public.settings
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+end $$;
 
 create or replace function public.handle_new_user()
 returns trigger

@@ -92,7 +92,7 @@ export function compareTradesChronologically(a: Trade, b: Trade) {
 
 export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: StockTag[] = [], positionAdjustments: PositionAdjustment[] = []): Position[] {
   const stocksById = new Map(stocks.map((stock) => [stock.id, stock]));
-  const adjustmentsByKey = new Map(positionAdjustments.map((adjustment) => [`${adjustment.portfolio_id}:${adjustment.stock_id}`, adjustment]));
+  const adjustmentsByKey = latestAdjustmentsByKey(positionAdjustments);
   const tagsByStockId = stockTags.reduce<Map<string, string[]>>((map, tag) => {
     const current = map.get(tag.stock_id) ?? [];
     current.push(tag.name);
@@ -153,7 +153,7 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
     drafts.set(key, draft);
   }
 
-  for (const adjustment of positionAdjustments) {
+  for (const adjustment of adjustmentsByKey.values()) {
     const key = `${adjustment.portfolio_id}:${adjustment.stock_id}`;
     if (drafts.has(key)) continue;
     drafts.set(key, {
@@ -211,6 +211,20 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
         total_return_rate: openCost > 0 ? totalProfit / openCost : 0
       };
     });
+}
+
+function latestAdjustmentsByKey(positionAdjustments: PositionAdjustment[]) {
+  const adjustmentsByKey = new Map<string, PositionAdjustment>();
+
+  for (const adjustment of positionAdjustments) {
+    const key = `${adjustment.portfolio_id}:${adjustment.stock_id}`;
+    const current = adjustmentsByKey.get(key);
+    if (!current || new Date(adjustment.updated_at).getTime() >= new Date(current.updated_at).getTime()) {
+      adjustmentsByKey.set(key, adjustment);
+    }
+  }
+
+  return adjustmentsByKey;
 }
 
 export function validateSellQuantity(trades: Trade[], stockId: string, portfolioId: string, sellQuantity: number) {

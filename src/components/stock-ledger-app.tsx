@@ -589,7 +589,12 @@ export default function StockLedgerApp() {
     setStockTags((tagResult.data ?? []) as StockTag[]);
     setTrades((tradeResult.data ?? []).map(normalizeTrade));
     setCashMovements((cashResult.data ?? []).map(normalizeCashMovement));
-    setPositionAdjustments(adjustmentsResult.error ? [] : (adjustmentsResult.data ?? []).map(normalizePositionAdjustment));
+    if (adjustmentsResult.error) {
+      console.error("Failed to load position adjustments", adjustmentsResult.error);
+      setMessage("持股校正資料暫時載入失敗，已保留目前畫面資料。");
+    } else {
+      setPositionAdjustments((adjustmentsResult.data ?? []).map(normalizePositionAdjustment));
+    }
     setSettings(settingsResult.data ? normalizeSettings(settingsResult.data) : { ...DEFAULT_SETTINGS, user_id: uidValue });
   }
 
@@ -1087,15 +1092,13 @@ export default function StockLedgerApp() {
       const adjustmentQuery = supabase.from("position_adjustments");
       if (parsed.quantity === 0 && parsed.holdingCost === 0) {
         const { error: adjustmentError } = await adjustmentQuery.delete().eq("portfolio_id", parsed.portfolioId).eq("stock_id", stock.id);
-        if (adjustmentError && !String(adjustmentError.message).includes("position_adjustments")) {
+        if (adjustmentError) {
           return setFormError(toUserError(adjustmentError, "更新持股調整失敗。"));
         }
       } else {
-        const { error: adjustmentError } = await adjustmentQuery.upsert(nextAdjustment);
+        const { error: adjustmentError } = await adjustmentQuery.upsert(nextAdjustment, { onConflict: "user_id,portfolio_id,stock_id" });
         if (adjustmentError) {
-          if (!String(adjustmentError.message).includes("position_adjustments")) {
-            return setFormError(toUserError(adjustmentError, "更新持股調整失敗。"));
-          }
+          return setFormError(toUserError(adjustmentError, "更新持股調整失敗。請確認已執行最新版 supabase/schema.sql。"));
         }
       }
       const { error: stockError } = await supabase.from("stocks").update({ industry: nextStock.industry, updated_at: nextStock.updated_at }).eq("id", stock.id);
@@ -1471,13 +1474,13 @@ export default function StockLedgerApp() {
           if (error) return setFormError(toUserError(error, "更新持股股票資料失敗。"));
         }
         for (const adjustment of nextAdjustments.filter((item) => affectedStockIds.has(item.stock_id))) {
-          const { error } = await supabase.from("position_adjustments").upsert(adjustment);
-          if (error && !String(error.message).includes("position_adjustments")) return setFormError(toUserError(error, "匯入持股校正資料失敗。"));
+          const { error } = await supabase.from("position_adjustments").upsert(adjustment, { onConflict: "user_id,portfolio_id,stock_id" });
+          if (error) return setFormError(toUserError(error, "匯入持股校正資料失敗。請確認已執行最新版 supabase/schema.sql。"));
         }
         for (const key of deletedAdjustmentKeys) {
           const [portfolioId, stockId] = key.split(":");
           const { error } = await supabase.from("position_adjustments").delete().eq("portfolio_id", portfolioId).eq("stock_id", stockId);
-          if (error && !String(error.message).includes("position_adjustments")) return setFormError(toUserError(error, "清除持股校正資料失敗。"));
+          if (error) return setFormError(toUserError(error, "清除持股校正資料失敗。"));
         }
         for (const stockId of affectedStockIds) {
           await supabase.from("stock_tags").delete().eq("stock_id", stockId);
