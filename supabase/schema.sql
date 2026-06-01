@@ -428,3 +428,322 @@ begin
   end loop;
 end;
 $$;
+
+create or replace function public.import_trades_transaction(
+  p_stocks jsonb,
+  p_trades jsonb,
+  p_portfolio_updates jsonb
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  stock_item jsonb;
+  trade_item jsonb;
+  portfolio_update jsonb;
+  target_stock_id uuid;
+  target_trade_id uuid;
+  target_portfolio_id uuid;
+begin
+  for stock_item in select * from jsonb_array_elements(coalesce(p_stocks, '[]'::jsonb)) loop
+    target_stock_id := (stock_item ->> 'id')::uuid;
+
+    if (stock_item ->> 'user_id')::uuid <> auth.uid() then
+      raise exception 'permission_denied'
+        using errcode = '42501';
+    end if;
+
+    if exists (
+      select 1
+      from public.stocks
+      where id = target_stock_id
+        and user_id = auth.uid()
+    ) then
+      update public.stocks
+      set
+        name = stock_item ->> 'name',
+        market = coalesce(nullif(stock_item ->> 'market', ''), market),
+        industry = nullif(stock_item ->> 'industry', ''),
+        current_price = coalesce((stock_item ->> 'current_price')::numeric, current_price),
+        price_updated_at = nullif(stock_item ->> 'price_updated_at', '')::timestamptz,
+        updated_at = coalesce(nullif(stock_item ->> 'updated_at', '')::timestamptz, now())
+      where id = target_stock_id
+        and user_id = auth.uid();
+    else
+      insert into public.stocks (
+        id,
+        user_id,
+        symbol,
+        name,
+        market,
+        industry,
+        current_price,
+        price_updated_at,
+        created_at,
+        updated_at
+      )
+      values (
+        target_stock_id,
+        auth.uid(),
+        stock_item ->> 'symbol',
+        stock_item ->> 'name',
+        coalesce(nullif(stock_item ->> 'market', ''), 'TWSE'),
+        nullif(stock_item ->> 'industry', ''),
+        coalesce((stock_item ->> 'current_price')::numeric, 0),
+        nullif(stock_item ->> 'price_updated_at', '')::timestamptz,
+        coalesce(nullif(stock_item ->> 'created_at', '')::timestamptz, now()),
+        coalesce(nullif(stock_item ->> 'updated_at', '')::timestamptz, now())
+      );
+    end if;
+  end loop;
+
+  for trade_item in select * from jsonb_array_elements(coalesce(p_trades, '[]'::jsonb)) loop
+    target_trade_id := (trade_item ->> 'id')::uuid;
+    target_stock_id := (trade_item ->> 'stock_id')::uuid;
+    target_portfolio_id := (trade_item ->> 'portfolio_id')::uuid;
+
+    if (trade_item ->> 'user_id')::uuid <> auth.uid() then
+      raise exception 'permission_denied'
+        using errcode = '42501';
+    end if;
+
+    perform 1
+    from public.portfolios
+    where id = target_portfolio_id
+      and user_id = auth.uid()
+    for update;
+
+    if not found then
+      raise exception 'portfolio_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    perform 1
+    from public.stocks
+    where id = target_stock_id
+      and user_id = auth.uid();
+
+    if not found then
+      raise exception 'stock_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    insert into public.trades (
+      id,
+      user_id,
+      portfolio_id,
+      stock_id,
+      type,
+      traded_at,
+      quantity,
+      unit_price,
+      gross_amount,
+      fee,
+      tax,
+      net_amount,
+      note,
+      created_at
+    )
+    values (
+      target_trade_id,
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      trade_item ->> 'type',
+      (trade_item ->> 'traded_at')::date,
+      (trade_item ->> 'quantity')::numeric,
+      (trade_item ->> 'unit_price')::numeric,
+      (trade_item ->> 'gross_amount')::numeric,
+      (trade_item ->> 'fee')::numeric,
+      (trade_item ->> 'tax')::numeric,
+      (trade_item ->> 'net_amount')::numeric,
+      nullif(trade_item ->> 'note', ''),
+      coalesce(nullif(trade_item ->> 'created_at', '')::timestamptz, now())
+    );
+  end loop;
+
+  for portfolio_update in select * from jsonb_array_elements(coalesce(p_portfolio_updates, '[]'::jsonb)) loop
+    perform 1
+    from public.portfolios
+    where id = (portfolio_update ->> 'id')::uuid
+      and user_id = auth.uid()
+    for update;
+
+    if not found then
+      raise exception 'portfolio_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    update public.portfolios
+    set
+      cash_balance = (portfolio_update ->> 'cash_balance')::numeric,
+      updated_at = coalesce(nullif(portfolio_update ->> 'updated_at', '')::timestamptz, now())
+    where id = (portfolio_update ->> 'id')::uuid
+      and user_id = auth.uid();
+  end loop;
+end;
+$$;
+
+create or replace function public.import_holdings_transaction(
+  p_stocks jsonb,
+  p_adjustments jsonb,
+  p_deleted_adjustments jsonb,
+  p_tags jsonb,
+  p_affected_stock_ids uuid[]
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  stock_item jsonb;
+  adjustment_item jsonb;
+  deleted_item jsonb;
+  tag_item jsonb;
+  target_stock_id uuid;
+  target_portfolio_id uuid;
+  affected_stock_id uuid;
+begin
+  for stock_item in select * from jsonb_array_elements(coalesce(p_stocks, '[]'::jsonb)) loop
+    target_stock_id := (stock_item ->> 'id')::uuid;
+
+    if (stock_item ->> 'user_id')::uuid <> auth.uid() then
+      raise exception 'permission_denied'
+        using errcode = '42501';
+    end if;
+
+    if exists (
+      select 1
+      from public.stocks
+      where id = target_stock_id
+        and user_id = auth.uid()
+    ) then
+      update public.stocks
+      set
+        name = stock_item ->> 'name',
+        market = coalesce(nullif(stock_item ->> 'market', ''), market),
+        industry = nullif(stock_item ->> 'industry', ''),
+        current_price = coalesce((stock_item ->> 'current_price')::numeric, current_price),
+        price_updated_at = nullif(stock_item ->> 'price_updated_at', '')::timestamptz,
+        updated_at = coalesce(nullif(stock_item ->> 'updated_at', '')::timestamptz, now())
+      where id = target_stock_id
+        and user_id = auth.uid();
+    else
+      insert into public.stocks (
+        id,
+        user_id,
+        symbol,
+        name,
+        market,
+        industry,
+        current_price,
+        price_updated_at,
+        created_at,
+        updated_at
+      )
+      values (
+        target_stock_id,
+        auth.uid(),
+        stock_item ->> 'symbol',
+        stock_item ->> 'name',
+        coalesce(nullif(stock_item ->> 'market', ''), 'TWSE'),
+        nullif(stock_item ->> 'industry', ''),
+        coalesce((stock_item ->> 'current_price')::numeric, 0),
+        nullif(stock_item ->> 'price_updated_at', '')::timestamptz,
+        coalesce(nullif(stock_item ->> 'created_at', '')::timestamptz, now()),
+        coalesce(nullif(stock_item ->> 'updated_at', '')::timestamptz, now())
+      );
+    end if;
+  end loop;
+
+  for adjustment_item in select * from jsonb_array_elements(coalesce(p_adjustments, '[]'::jsonb)) loop
+    target_stock_id := (adjustment_item ->> 'stock_id')::uuid;
+    target_portfolio_id := (adjustment_item ->> 'portfolio_id')::uuid;
+
+    if (adjustment_item ->> 'user_id')::uuid <> auth.uid() then
+      raise exception 'permission_denied'
+        using errcode = '42501';
+    end if;
+
+    perform 1
+    from public.portfolios
+    where id = target_portfolio_id
+      and user_id = auth.uid();
+
+    if not found then
+      raise exception 'portfolio_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    perform 1
+    from public.stocks
+    where id = target_stock_id
+      and user_id = auth.uid();
+
+    if not found then
+      raise exception 'stock_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    insert into public.position_adjustments (
+      id,
+      user_id,
+      portfolio_id,
+      stock_id,
+      adjusted_quantity,
+      adjusted_cost,
+      created_at,
+      updated_at
+    )
+    values (
+      (adjustment_item ->> 'id')::uuid,
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      (adjustment_item ->> 'adjusted_quantity')::numeric,
+      (adjustment_item ->> 'adjusted_cost')::numeric,
+      coalesce(nullif(adjustment_item ->> 'created_at', '')::timestamptz, now()),
+      coalesce(nullif(adjustment_item ->> 'updated_at', '')::timestamptz, now())
+    )
+    on conflict (user_id, portfolio_id, stock_id)
+    do update set
+      adjusted_quantity = excluded.adjusted_quantity,
+      adjusted_cost = excluded.adjusted_cost,
+      updated_at = excluded.updated_at;
+  end loop;
+
+  for deleted_item in select * from jsonb_array_elements(coalesce(p_deleted_adjustments, '[]'::jsonb)) loop
+    delete from public.position_adjustments
+    where user_id = auth.uid()
+      and portfolio_id = (deleted_item ->> 'portfolio_id')::uuid
+      and stock_id = (deleted_item ->> 'stock_id')::uuid;
+  end loop;
+
+  foreach affected_stock_id in array coalesce(p_affected_stock_ids, array[]::uuid[]) loop
+    delete from public.stock_tags
+    where user_id = auth.uid()
+      and stock_id = affected_stock_id;
+  end loop;
+
+  for tag_item in select * from jsonb_array_elements(coalesce(p_tags, '[]'::jsonb)) loop
+    target_stock_id := (tag_item ->> 'stock_id')::uuid;
+
+    if (tag_item ->> 'user_id')::uuid <> auth.uid() then
+      raise exception 'permission_denied'
+        using errcode = '42501';
+    end if;
+
+    insert into public.stock_tags (id, user_id, stock_id, name)
+    values (
+      (tag_item ->> 'id')::uuid,
+      auth.uid(),
+      target_stock_id,
+      tag_item ->> 'name'
+    )
+    on conflict (user_id, stock_id, name) do nothing;
+  end loop;
+end;
+$$;

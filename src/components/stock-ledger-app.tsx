@@ -1281,29 +1281,27 @@ export default function StockLedgerApp() {
       }
 
       if (supabase && hasSupabaseEnv) {
-        const client = supabase;
-        const stockInsertResults = await Promise.all(nextStocks.filter((stock) => !stocks.some((old) => old.id === stock.id)).map((stock) => client.from("stocks").insert(stock)));
-        const stockInsertError = stockInsertResults.find((result) => result.error)?.error;
-        if (stockInsertError) return setFormError(toUserError(stockInsertError, "匯入股票資料失敗。"));
-        const stockUpdateResults = await Promise.all(
-          nextStocks
-            .filter((stock) => {
-              const old = stocks.find((item) => item.id === stock.id);
-              return old && old.industry !== stock.industry;
-            })
-            .map((stock) => client.from("stocks").update({ industry: stock.industry, updated_at: stock.updated_at }).eq("id", stock.id))
-        );
-        const stockUpdateError = stockUpdateResults.find((result) => result.error)?.error;
-        if (stockUpdateError) return setFormError(toUserError(stockUpdateError, "更新股票產業別失敗。"));
-        const { error: tradeInsertError } = await client.from("trades").insert(nextTrades.filter((trade) => !trades.some((old) => old.id === trade.id)));
-        if (tradeInsertError) return setFormError(toUserError(tradeInsertError, "匯入交易失敗。"));
-        for (const portfolio of nextPortfolios) {
-          const old = portfolios.find((item) => item.id === portfolio.id);
-          if (old && old.cash_balance !== portfolio.cash_balance) {
-            const { error: portfolioError } = await client.from("portfolios").update({ cash_balance: portfolio.cash_balance, updated_at: portfolio.updated_at }).eq("id", portfolio.id);
-            if (portfolioError) return setFormError(toUserError(portfolioError, "更新帳本現金失敗。"));
-          }
-        }
+        const changedStocks = nextStocks.filter((stock) => {
+          const old = stocks.find((item) => item.id === stock.id);
+          return !old || old.industry !== stock.industry;
+        });
+        const importedTrades = nextTrades.filter((trade) => !trades.some((old) => old.id === trade.id));
+        const changedPortfolios = nextPortfolios
+          .filter((portfolio) => {
+            const old = portfolios.find((item) => item.id === portfolio.id);
+            return old && old.cash_balance !== portfolio.cash_balance;
+          })
+          .map((portfolio) => ({
+            id: portfolio.id,
+            cash_balance: portfolio.cash_balance,
+            updated_at: portfolio.updated_at
+          }));
+        const { error: importError } = await supabase.rpc("import_trades_transaction", {
+          p_stocks: changedStocks,
+          p_trades: importedTrades,
+          p_portfolio_updates: changedPortfolios
+        });
+        if (importError) return setFormError(toUserError(importError, "匯入交易失敗，資料庫未完成股票、交易與現金同步更新。請確認已執行最新版 supabase/schema.sql。"));
       }
 
       setStocks(nextStocks);
@@ -1468,34 +1466,19 @@ export default function StockLedgerApp() {
           const old = stocks.find((item) => item.id === stock.id);
           return old && affectedStockIds.has(stock.id);
         });
-        if (newStocks.length) {
-          const { error } = await supabase.from("stocks").insert(newStocks);
-          if (error) return setFormError(toUserError(error, "匯入持股股票資料失敗。"));
-        }
-        for (const stock of updatedStocks) {
-          const { error } = await supabase
-            .from("stocks")
-            .update({ name: stock.name, market: stock.market, industry: stock.industry, current_price: stock.current_price, price_updated_at: stock.price_updated_at, updated_at: stock.updated_at })
-            .eq("id", stock.id);
-          if (error) return setFormError(toUserError(error, "更新持股股票資料失敗。"));
-        }
-        for (const adjustment of nextAdjustments.filter((item) => affectedStockIds.has(item.stock_id))) {
-          const { error } = await supabase.from("position_adjustments").upsert(adjustment, { onConflict: "user_id,portfolio_id,stock_id" });
-          if (error) return setFormError(toUserError(error, "匯入持股校正資料失敗。請確認已執行最新版 supabase/schema.sql。"));
-        }
-        for (const key of deletedAdjustmentKeys) {
+        const deletedAdjustments = [...deletedAdjustmentKeys].map((key) => {
           const [portfolioId, stockId] = key.split(":");
-          const { error } = await supabase.from("position_adjustments").delete().eq("portfolio_id", portfolioId).eq("stock_id", stockId);
-          if (error) return setFormError(toUserError(error, "清除持股校正資料失敗。"));
-        }
-        for (const stockId of affectedStockIds) {
-          await supabase.from("stock_tags").delete().eq("stock_id", stockId);
-        }
+          return { portfolio_id: portfolioId, stock_id: stockId };
+        });
         const affectedTags = nextTags.filter((tag) => affectedStockIds.has(tag.stock_id));
-        if (affectedTags.length) {
-          const { error } = await supabase.from("stock_tags").insert(affectedTags);
-          if (error) return setFormError(toUserError(error, "匯入持股標籤失敗。"));
-        }
+        const { error: importError } = await supabase.rpc("import_holdings_transaction", {
+          p_stocks: [...newStocks, ...updatedStocks],
+          p_adjustments: nextAdjustments.filter((item) => affectedStockIds.has(item.stock_id)),
+          p_deleted_adjustments: deletedAdjustments,
+          p_tags: affectedTags,
+          p_affected_stock_ids: [...affectedStockIds]
+        });
+        if (importError) return setFormError(toUserError(importError, "匯入持股失敗，資料庫未完成股票、成本校正與標籤同步更新。請確認已執行最新版 supabase/schema.sql。"));
       }
 
       setStocks(nextStocks);
