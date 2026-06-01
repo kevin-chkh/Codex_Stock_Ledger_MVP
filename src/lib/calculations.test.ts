@@ -47,18 +47,18 @@ describe("calculateTradeAmounts", () => {
   it("calculates buy total cost with minimum fee", () => {
     expect(calculateTradeAmounts({ type: "buy", quantity: 100, unitPrice: 100, settings: DEFAULT_SETTINGS })).toEqual({
       grossAmount: 10000,
-      fee: 14.25,
+      fee: 12.83,
       tax: 0,
-      netAmount: 10014.25
+      netAmount: 10012.83
     });
   });
 
   it("calculates sell net amount with tax", () => {
     expect(calculateTradeAmounts({ type: "sell", quantity: 100, unitPrice: 100, settings: DEFAULT_SETTINGS })).toEqual({
       grossAmount: 10000,
-      fee: 14.25,
+      fee: 12.83,
       tax: 30,
-      netAmount: 9955.75
+      netAmount: 9957.17
     });
   });
 
@@ -85,7 +85,7 @@ describe("calculateTradeAmounts", () => {
       resolveUnitPriceFromTotalAmount({
         type: "buy",
         quantity: 100,
-        totalAmount: 10014.25,
+        totalAmount: 10012.83,
         settings: DEFAULT_SETTINGS
       })
     ).toBe(100);
@@ -100,6 +100,18 @@ describe("calculateTradeAmounts", () => {
         settings: DEFAULT_SETTINGS
       })
     ).toBe(100);
+  });
+
+  it("derives sell unit price from net amount when total includes fee and tax", () => {
+    expect(
+      resolveUnitPriceFromTotalAmount({
+        type: "sell",
+        quantity: 4,
+        totalAmount: 13263,
+        settings: DEFAULT_SETTINGS,
+        totalAmountIncludesFees: true
+      })
+    ).toBeCloseTo(3330, 1);
   });
 });
 
@@ -162,10 +174,10 @@ describe("buildPositions", () => {
   });
 
   it("includes buy fees in holding cost while keeping average cost fee-free", () => {
-    const positions = buildPositions([trade({ quantity: 100, gross_amount: 10000, fee: 14.25, net_amount: 10014.25 })], [stock]);
+    const positions = buildPositions([trade({ quantity: 100, gross_amount: 10000, fee: 12.83, net_amount: 10012.83 })], [stock]);
 
-    expect(positions[0].holding_cost).toBe(10014.25);
-    expect(positions[0].remaining_cost).toBe(10014.25);
+    expect(positions[0].holding_cost).toBe(10012.83);
+    expect(positions[0].remaining_cost).toBe(10012.83);
     expect(positions[0].average_cost).toBe(100);
   });
 

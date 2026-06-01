@@ -43,6 +43,7 @@ type TradeDraft = {
   quantity: string;
   unitPrice: string;
   totalAmount: string;
+  totalAmountIncludesFees: boolean;
   industry: string;
   tags: string;
 };
@@ -90,6 +91,7 @@ const tradeSchema = z.object({
   portfolioId: z.string().min(1, "請選擇帳本"),
   type: z.enum(["buy", "sell"]),
   buyMode: z.enum(["unitPrice", "totalAmount"]).default("unitPrice"),
+  totalAmountIncludesFees: z.boolean().default(false),
   tradedAt: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "請選擇成交日期")
@@ -205,6 +207,7 @@ const emptyTradeDraft: TradeDraft = {
   quantity: "",
   unitPrice: "",
   totalAmount: "",
+  totalAmountIncludesFees: false,
   industry: "",
   tags: ""
 };
@@ -811,7 +814,8 @@ export default function StockLedgerApp() {
               type: tradeDraft.type,
               quantity: Number(tradeDraft.quantity || 0),
               totalAmount: parseNumericInput(tradeDraft.totalAmount || "0"),
-              settings
+              settings,
+              totalAmountIncludesFees: tradeDraft.type === "sell" && tradeDraft.totalAmountIncludesFees
             })
           : 0
         : Number(tradeDraft.unitPrice || 0);
@@ -1010,6 +1014,7 @@ export default function StockLedgerApp() {
       quantity: String(trade.quantity),
       unitPrice: String(trade.unit_price),
       totalAmount: String(trade.type === "buy" ? trade.net_amount : trade.gross_amount),
+      totalAmountIncludesFees: false,
       industry: stock?.industry ?? "",
       tags: stockTags
         .filter((tag) => tag.stock_id === trade.stock_id)
@@ -1889,9 +1894,10 @@ function normalizePositionAdjustment(row: Record<string, unknown>): PositionAdju
 }
 
 function normalizeSettings(row: Record<string, unknown>): UserSettings {
+  const feeRate = numberValue(row.fee_rate);
   return {
     user_id: String(row.user_id),
-    fee_rate: numberValue(row.fee_rate),
+    fee_rate: feeRate === 0.001425 ? DEFAULT_SETTINGS.fee_rate : feeRate,
     tax_rate: numberValue(row.tax_rate),
     minimum_fee: numberValue(row.minimum_fee),
     allow_negative_cash: Boolean(row.allow_negative_cash)
@@ -1962,7 +1968,7 @@ function normalizeLocalSnapshot(parsed: Partial<LocalSnapshot>): LocalSnapshot |
     stockTags: parsed.stockTags ?? [],
     trades: parsed.trades ?? [],
     positionAdjustments: Array.isArray(parsed.positionAdjustments) ? parsed.positionAdjustments.map((row) => normalizePositionAdjustment(row as Record<string, unknown>)) : [],
-    settings: parsed.settings ?? DEFAULT_SETTINGS
+    settings: parsed.settings ? normalizeSettings(parsed.settings as unknown as Record<string, unknown>) : DEFAULT_SETTINGS
   };
 }
 

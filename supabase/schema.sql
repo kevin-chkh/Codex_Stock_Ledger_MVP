@@ -84,7 +84,7 @@ create table if not exists public.position_adjustments (
 
 create table if not exists public.settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
-  fee_rate numeric(10, 8) not null default 0.001425,
+  fee_rate numeric(10, 8) not null default 0.0012825,
   tax_rate numeric(10, 8) not null default 0.003,
   minimum_fee numeric(18, 2) not null default 0,
   allow_negative_cash boolean not null default false

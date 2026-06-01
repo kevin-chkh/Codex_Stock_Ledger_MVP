@@ -16,6 +16,7 @@ type TradeDraft = {
   quantity: string;
   unitPrice: string;
   totalAmount: string;
+  totalAmountIncludesFees: boolean;
   industry: string;
   tags: string;
 };
@@ -35,6 +36,13 @@ function formatThousandsInput(value: string) {
   const [integerPart, decimalPart] = normalized.split(".");
   const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return decimalPart !== undefined ? `${formattedInteger}.${decimalPart}` : formattedInteger;
+}
+
+function normalizeStockKeyword(value: string) {
+  return value
+    .trim()
+    .replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .toUpperCase();
 }
 
 function StockSuggestionMenu({ items, onPick }: { items: StockCatalogItem[]; onPick: (item: StockCatalogItem) => void }) {
@@ -90,13 +98,14 @@ export function TradeForm({
     [positions, selectedPortfolioId, selectedStock?.id]
   );
 
-  const autoFillBySymbol = (symbol: string) => {
-    const found = findStockBySymbol(stockCatalog, symbol);
+  const autoFillBySymbol = (rawSymbol: string) => {
+    const symbol = normalizeStockKeyword(rawSymbol);
+    const found = findStockBySymbol(stockCatalog, symbol) ?? stocks.find((stock) => stock.symbol === symbol);
     setDraft((value) => ({
       ...value,
       symbol,
-      name: found?.name || value.name,
-      industry: found?.industry || value.industry
+      name: found?.name || "",
+      industry: found?.industry || ""
     }));
   };
   const clearSelectedStock = () => {
@@ -120,12 +129,15 @@ export function TradeForm({
     setShowNameSuggestions(false);
   };
   const autoFillByName = (name: string) => {
-    const found = findStockByName(stockCatalog, name);
+    const normalizedName = name.trim();
+    const found =
+      findStockByName(stockCatalog, normalizedName) ??
+      stocks.find((stock) => stock.name === normalizedName || stock.name.includes(normalizedName));
     setDraft((value) => ({
       ...value,
-      name,
-      symbol: found?.symbol || value.symbol,
-      industry: found?.industry || value.industry
+      name: normalizedName,
+      symbol: found?.symbol || "",
+      industry: found?.industry || ""
     }));
   };
   const resolvedUnitPrice =
@@ -135,7 +147,8 @@ export function TradeForm({
             type: draft.type,
             quantity: Number(draft.quantity || 0),
             totalAmount: Number(stripNumberFormatting(draft.totalAmount || "0")),
-            settings
+            settings,
+            totalAmountIncludesFees: draft.type === "sell" && draft.totalAmountIncludesFees
           })
         : 0
       : Number(draft.unitPrice || 0);
@@ -228,6 +241,21 @@ export function TradeForm({
             }
           />
           <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
+            {draft.type === "sell" && (
+              <label className="mb-3 flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
+                <span className="text-ink/70">已含手續費與交易稅</span>
+                <input
+                  type="checkbox"
+                  checked={draft.totalAmountIncludesFees}
+                  onChange={(event) =>
+                    setDraft((value) => ({
+                      ...value,
+                      totalAmountIncludesFees: event.target.checked
+                    }))
+                  }
+                />
+              </label>
+            )}
             <div className="flex justify-between">
               <span className="text-ink/60">自動計算每股價格</span>
               <strong>{decimal(resolvedUnitPrice, 2)}</strong>

@@ -57,8 +57,8 @@ describe("trade ledger integration", () => {
 
     const [updated] = applyTradeToPortfolios([portfolio()], null, buy, "2026-01-02T00:00:00.000Z");
 
-    expect(buy.net_amount).toBe(10014.25);
-    expect(updated.cash_balance).toBe(89985.75);
+    expect(buy.net_amount).toBe(10012.83);
+    expect(updated.cash_balance).toBe(89987.17);
     expect(updated.updated_at).toBe("2026-01-02T00:00:00.000Z");
   });
 
@@ -148,14 +148,14 @@ describe("trade ledger integration", () => {
 
     const afterBuy = applyTradeToPortfolios([base], null, buy, "2026-01-01T00:00:00.000Z");
     const afterSell = applyTradeToPortfolios(afterBuy, null, sell, "2026-01-02T00:00:00.000Z");
-    expect(afterSell[0]?.cash_balance).toBeCloseTo(97153.89, 6);
+    expect(afterSell[0]?.cash_balance).toBeCloseTo(97156.34, 6);
 
     const editedSell = { ...sell, quantity: 40, gross_amount: 4800, fee: 20, tax: 14.4, net_amount: 4765.6 };
     const afterEdit = applyTradeToPortfolios(afterSell, sell, editedSell, "2026-01-03T00:00:00.000Z");
-    expect(afterEdit[0]?.cash_balance).toBeCloseTo(94751.35, 6);
+    expect(afterEdit[0]?.cash_balance).toBeCloseTo(94752.77, 6);
 
     const afterDelete = deleteTradeFromPortfolios(afterEdit, editedSell, "2026-01-04T00:00:00.000Z");
-    expect(afterDelete[0]?.cash_balance).toBeCloseTo(89985.75, 6);
+    expect(afterDelete[0]?.cash_balance).toBeCloseTo(89987.17, 6);
     expect(hasOversoldPosition([buy, editedSell])).toBe(false);
   });
 });

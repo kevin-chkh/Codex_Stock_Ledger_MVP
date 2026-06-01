@@ -2,7 +2,7 @@ import type { DashboardMetrics, Portfolio, Position, PositionAdjustment, Stock, 
 
 export const DEFAULT_SETTINGS: UserSettings = {
   user_id: "",
-  fee_rate: 0.001425,
+  fee_rate: 0.0012825,
   tax_rate: 0.003,
   minimum_fee: 0,
   allow_negative_cash: false
@@ -42,11 +42,26 @@ export function resolveUnitPriceFromTotalAmount(input: {
   quantity: number;
   totalAmount: number;
   settings: Pick<UserSettings, "fee_rate" | "tax_rate" | "minimum_fee">;
+  totalAmountIncludesFees?: boolean;
 }) {
   if (input.quantity <= 0 || input.totalAmount <= 0) return 0;
 
   if (input.type === "sell") {
-    return roundMoney(input.totalAmount / input.quantity);
+    if (!input.totalAmountIncludesFees) return roundMoney(input.totalAmount / input.quantity);
+
+    let grossAmount = roundMoney(input.totalAmount);
+    for (let index = 0; index < 8; index += 1) {
+      const fee = calculateFee(grossAmount, input.settings);
+      const tax = calculateTax(grossAmount, "sell", input.settings);
+      const nextGrossAmount = roundMoney(input.totalAmount + fee + tax);
+      if (Math.abs(nextGrossAmount - grossAmount) < 0.01) {
+        grossAmount = nextGrossAmount;
+        break;
+      }
+      grossAmount = nextGrossAmount;
+    }
+
+    return roundMoney(grossAmount / input.quantity);
   }
 
   let grossAmount = roundMoney(input.totalAmount);
