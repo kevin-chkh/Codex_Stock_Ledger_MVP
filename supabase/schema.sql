@@ -209,3 +209,222 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
+
+create or replace function public.delete_trade_transaction(p_trade_id uuid)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  target_trade public.trades%rowtype;
+  cash_delta numeric(18, 2);
+begin
+  select *
+  into target_trade
+  from public.trades
+  where id = p_trade_id
+    and user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'trade_not_found'
+      using errcode = 'P0002';
+  end if;
+
+  perform 1
+  from public.portfolios
+  where id = target_trade.portfolio_id
+    and user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'portfolio_not_found'
+      using errcode = 'P0002';
+  end if;
+
+  cash_delta := case
+    when target_trade.type = 'buy' then target_trade.net_amount
+    else -target_trade.net_amount
+  end;
+
+  update public.portfolios
+  set
+    cash_balance = cash_balance + cash_delta,
+    updated_at = now()
+  where id = target_trade.portfolio_id
+    and user_id = auth.uid();
+
+  delete from public.trades
+  where id = target_trade.id
+    and user_id = auth.uid();
+end;
+$$;
+
+create or replace function public.save_trade_transaction(
+  p_stock jsonb,
+  p_trade jsonb,
+  p_tag_names text[],
+  p_portfolio_updates jsonb
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  target_stock_id uuid := (p_stock ->> 'id')::uuid;
+  target_trade_id uuid := (p_trade ->> 'id')::uuid;
+  target_portfolio_id uuid := (p_trade ->> 'portfolio_id')::uuid;
+  portfolio_update jsonb;
+  tag_name text;
+begin
+  if (p_stock ->> 'user_id')::uuid <> auth.uid()
+    or (p_trade ->> 'user_id')::uuid <> auth.uid() then
+    raise exception 'permission_denied'
+      using errcode = '42501';
+  end if;
+
+  perform 1
+  from public.portfolios
+  where id = target_portfolio_id
+    and user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'portfolio_not_found'
+      using errcode = 'P0002';
+  end if;
+
+  if exists (
+    select 1
+    from public.stocks
+    where id = target_stock_id
+      and user_id = auth.uid()
+  ) then
+    update public.stocks
+    set
+      name = p_stock ->> 'name',
+      market = coalesce(nullif(p_stock ->> 'market', ''), market),
+      industry = nullif(p_stock ->> 'industry', ''),
+      current_price = coalesce((p_stock ->> 'current_price')::numeric, current_price),
+      price_updated_at = nullif(p_stock ->> 'price_updated_at', '')::timestamptz,
+      updated_at = coalesce(nullif(p_stock ->> 'updated_at', '')::timestamptz, now())
+    where id = target_stock_id
+      and user_id = auth.uid();
+  else
+    insert into public.stocks (
+      id,
+      user_id,
+      symbol,
+      name,
+      market,
+      industry,
+      current_price,
+      price_updated_at,
+      created_at,
+      updated_at
+    )
+    values (
+      target_stock_id,
+      auth.uid(),
+      p_stock ->> 'symbol',
+      p_stock ->> 'name',
+      coalesce(nullif(p_stock ->> 'market', ''), 'TWSE'),
+      nullif(p_stock ->> 'industry', ''),
+      coalesce((p_stock ->> 'current_price')::numeric, 0),
+      nullif(p_stock ->> 'price_updated_at', '')::timestamptz,
+      coalesce(nullif(p_stock ->> 'created_at', '')::timestamptz, now()),
+      coalesce(nullif(p_stock ->> 'updated_at', '')::timestamptz, now())
+    );
+  end if;
+
+  if exists (
+    select 1
+    from public.trades
+    where id = target_trade_id
+      and user_id = auth.uid()
+  ) then
+    update public.trades
+    set
+      portfolio_id = target_portfolio_id,
+      stock_id = target_stock_id,
+      type = p_trade ->> 'type',
+      traded_at = (p_trade ->> 'traded_at')::date,
+      quantity = (p_trade ->> 'quantity')::numeric,
+      unit_price = (p_trade ->> 'unit_price')::numeric,
+      gross_amount = (p_trade ->> 'gross_amount')::numeric,
+      fee = (p_trade ->> 'fee')::numeric,
+      tax = (p_trade ->> 'tax')::numeric,
+      net_amount = (p_trade ->> 'net_amount')::numeric,
+      note = nullif(p_trade ->> 'note', '')
+    where id = target_trade_id
+      and user_id = auth.uid();
+  else
+    insert into public.trades (
+      id,
+      user_id,
+      portfolio_id,
+      stock_id,
+      type,
+      traded_at,
+      quantity,
+      unit_price,
+      gross_amount,
+      fee,
+      tax,
+      net_amount,
+      note,
+      created_at
+    )
+    values (
+      target_trade_id,
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      p_trade ->> 'type',
+      (p_trade ->> 'traded_at')::date,
+      (p_trade ->> 'quantity')::numeric,
+      (p_trade ->> 'unit_price')::numeric,
+      (p_trade ->> 'gross_amount')::numeric,
+      (p_trade ->> 'fee')::numeric,
+      (p_trade ->> 'tax')::numeric,
+      (p_trade ->> 'net_amount')::numeric,
+      nullif(p_trade ->> 'note', ''),
+      coalesce(nullif(p_trade ->> 'created_at', '')::timestamptz, now())
+    );
+  end if;
+
+  delete from public.stock_tags
+  where stock_id = target_stock_id
+    and user_id = auth.uid();
+
+  foreach tag_name in array coalesce(p_tag_names, array[]::text[]) loop
+    if nullif(trim(tag_name), '') is not null then
+      insert into public.stock_tags (user_id, stock_id, name)
+      values (auth.uid(), target_stock_id, trim(tag_name))
+      on conflict (user_id, stock_id, name) do nothing;
+    end if;
+  end loop;
+
+  for portfolio_update in select * from jsonb_array_elements(coalesce(p_portfolio_updates, '[]'::jsonb)) loop
+    perform 1
+    from public.portfolios
+    where id = (portfolio_update ->> 'id')::uuid
+      and user_id = auth.uid()
+    for update;
+
+    if not found then
+      raise exception 'portfolio_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    update public.portfolios
+    set
+      cash_balance = (portfolio_update ->> 'cash_balance')::numeric,
+      updated_at = coalesce(nullif(portfolio_update ->> 'updated_at', '')::timestamptz, now())
+    where id = (portfolio_update ->> 'id')::uuid
+      and user_id = auth.uid();
+  end loop;
+end;
+$$;

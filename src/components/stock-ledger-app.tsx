@@ -598,6 +598,11 @@ export default function StockLedgerApp() {
     setSettings(settingsResult.data ? normalizeSettings(settingsResult.data) : { ...DEFAULT_SETTINGS, user_id: uidValue });
   }
 
+  async function reloadCloudDataAfterWrite() {
+    if (!supabase || !hasSupabaseEnv || !userId || userId === "demo") return;
+    await loadCloudData(userId);
+  }
+
   async function signIn() {
     setMessage("");
     if (!supabase) {
@@ -655,6 +660,7 @@ export default function StockLedgerApp() {
     const parsed = portfolioSchema.safeParse(portfolioDraft);
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
     const now = new Date().toISOString();
+    let successMessage = "";
 
     if (editingPortfolioId) {
       const currentPortfolio = portfolios.find((item) => item.id === editingPortfolioId);
@@ -673,7 +679,7 @@ export default function StockLedgerApp() {
         if (error) return setFormError(toUserError(error, "重新命名帳本失敗。"));
       }
       setPortfolios((current) => current.map((item) => (item.id === editingPortfolioId ? nextPortfolio : item)));
-      setMessage("帳本已重新命名。");
+      successMessage = "帳本已重新命名。";
     } else {
       const id = uid();
       const amount = parsed.data.initialAmount;
@@ -697,11 +703,13 @@ export default function StockLedgerApp() {
       }
       setPortfolios((current) => [...current, item]);
       if (!selectedPortfolioId) setSelectedPortfolioId(id);
-      setMessage("帳本已新增。");
+      successMessage = "帳本已新增。";
     }
 
     setEditingPortfolioId(null);
     setPortfolioDraft({ name: "", initialAmount: "", note: "" });
+    await reloadCloudDataAfterWrite();
+    setMessage(successMessage);
     setSheetMode(null);
   }
 
@@ -748,6 +756,7 @@ export default function StockLedgerApp() {
     const remainingPortfolios = portfolios.filter((item) => item.id !== portfolio.id);
     setPortfolios(remainingPortfolios);
     if (activePortfolioId === portfolio.id) setSelectedPortfolioId(remainingPortfolios[0]?.id ?? "");
+    await reloadCloudDataAfterWrite();
     setMessage("帳本已刪除。");
   }
 
@@ -794,6 +803,7 @@ export default function StockLedgerApp() {
     setPortfolios((current) => current.map((item) => (item.id === portfolio.id ? nextPortfolio : item)));
     setCashMovements((current) => [movement, ...current]);
     setCashDraft({ portfolioId: portfolio.id, type: "deposit", amount: "", note: "" });
+    await reloadCloudDataAfterWrite();
     setMessage("資金異動已儲存。");
     setSheetMode(null);
   }
@@ -922,27 +932,18 @@ export default function StockLedgerApp() {
     const portfolioUpdates = buildPortfolioUpdates(portfolios, editingTrade, trade, new Date().toISOString());
 
     if (supabase && hasSupabaseEnv) {
-      if (!existingStock) {
-        const { error: stockError } = await supabase.from("stocks").insert(stock);
-        if (stockError) return setFormError(toUserError(stockError, "建立股票失敗。"));
-      } else if (parsed.data.industry && parsed.data.industry !== existingStock.industry) {
-        await supabase.from("stocks").update({ industry: parsed.data.industry, updated_at: new Date().toISOString() }).eq("id", stock.id);
-      }
-      const { error: tradeError } = editingTrade
-        ? await supabase.from("trades").update(trade).eq("id", trade.id)
-        : await supabase.from("trades").insert(trade);
-      if (tradeError) return setFormError(toUserError(tradeError, "儲存交易失敗。"));
-      await supabase.from("stock_tags").delete().eq("stock_id", stock.id);
-      if (tagRows.length) {
-        const { error: tagError } = await supabase.from("stock_tags").insert(tagRows);
-        if (tagError) return setFormError(toUserError(tagError, "儲存標籤失敗。"));
-      }
-      for (const nextPortfolio of portfolioUpdates) {
-        const { error: portfolioError } = await supabase
-          .from("portfolios")
-          .update({ cash_balance: nextPortfolio.cash_balance, updated_at: nextPortfolio.updated_at })
-          .eq("id", nextPortfolio.id);
-        if (portfolioError) return setFormError(toUserError(portfolioError, "更新帳本現金失敗。"));
+      const { error: tradeError } = await supabase.rpc("save_trade_transaction", {
+        p_stock: stock,
+        p_trade: trade,
+        p_tag_names: tagRows.map((tag) => tag.name),
+        p_portfolio_updates: portfolioUpdates.map((nextPortfolio) => ({
+          id: nextPortfolio.id,
+          cash_balance: nextPortfolio.cash_balance,
+          updated_at: nextPortfolio.updated_at
+        }))
+      });
+      if (tradeError) {
+        return setFormError(toUserError(tradeError, "儲存交易失敗，資料庫未完成股票、交易、標籤與現金同步更新。請確認已執行最新版 supabase/schema.sql。"));
       }
     }
 
@@ -955,6 +956,7 @@ export default function StockLedgerApp() {
     setEditingTradeId(null);
     setTradeDraft({ ...emptyTradeDraft, portfolioId: portfolio.id });
     setFormError("");
+    await reloadCloudDataAfterWrite();
     setMessage("儲存成功");
     setSheetMode(null);
   }
@@ -979,18 +981,9 @@ export default function StockLedgerApp() {
     }
 
     if (supabase && hasSupabaseEnv) {
-      const { error: tradeError } = await supabase.from("trades").delete().eq("id", trade.id);
-      if (tradeError) {
-        const error = toUserError(tradeError, "刪除交易失敗。");
-        setMessage(error);
-        return setFormError(error);
-      }
-      const { error: portfolioError } = await supabase
-        .from("portfolios")
-        .update({ cash_balance: nextPortfolio.cash_balance, updated_at: nextPortfolio.updated_at })
-        .eq("id", nextPortfolio.id);
-      if (portfolioError) {
-        const error = toUserError(portfolioError, "更新帳本現金失敗。");
+      const { error: deleteError } = await supabase.rpc("delete_trade_transaction", { p_trade_id: trade.id });
+      if (deleteError) {
+        const error = toUserError(deleteError, "刪除交易失敗，資料庫未完成交易與現金同步更新。請確認已執行最新版 supabase/schema.sql。");
         setMessage(error);
         return setFormError(error);
       }
@@ -999,6 +992,7 @@ export default function StockLedgerApp() {
     setTrades(nextTrades);
     setPortfolios((current) => current.map((item) => (item.id === nextPortfolio.id ? nextPortfolio : item)));
     setFormError("");
+    await reloadCloudDataAfterWrite();
     setMessage("交易已刪除。");
   }
 
@@ -1116,6 +1110,7 @@ export default function StockLedgerApp() {
     });
     setStocks((current) => current.map((item) => (item.id === stock.id ? nextStock : item)));
     setStockTags((current) => [...current.filter((item) => item.stock_id !== stock.id), ...tagRows]);
+    await reloadCloudDataAfterWrite();
     setMessage(supabase && hasSupabaseEnv ? "成本校正已更新。" : "成本校正已更新。");
     setConfirmState(null);
     setSheetMode(null);
@@ -1163,6 +1158,10 @@ export default function StockLedgerApp() {
 
   async function importJsonBackup(file: File) {
     setFormError("");
+    if (supabase && hasSupabaseEnv && userId !== "demo") {
+      setFormError("雲端模式目前不支援 JSON 覆蓋匯入，避免重新整理後被 Supabase 資料覆蓋。請改用交易 CSV 或持股 CSV 匯入。");
+      return;
+    }
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as { data?: unknown };
@@ -1283,8 +1282,10 @@ export default function StockLedgerApp() {
 
       if (supabase && hasSupabaseEnv) {
         const client = supabase;
-        await Promise.all(nextStocks.filter((stock) => !stocks.some((old) => old.id === stock.id)).map((stock) => client.from("stocks").insert(stock)));
-        await Promise.all(
+        const stockInsertResults = await Promise.all(nextStocks.filter((stock) => !stocks.some((old) => old.id === stock.id)).map((stock) => client.from("stocks").insert(stock)));
+        const stockInsertError = stockInsertResults.find((result) => result.error)?.error;
+        if (stockInsertError) return setFormError(toUserError(stockInsertError, "匯入股票資料失敗。"));
+        const stockUpdateResults = await Promise.all(
           nextStocks
             .filter((stock) => {
               const old = stocks.find((item) => item.id === stock.id);
@@ -1292,11 +1293,15 @@ export default function StockLedgerApp() {
             })
             .map((stock) => client.from("stocks").update({ industry: stock.industry, updated_at: stock.updated_at }).eq("id", stock.id))
         );
-        await client.from("trades").insert(nextTrades.filter((trade) => !trades.some((old) => old.id === trade.id)));
+        const stockUpdateError = stockUpdateResults.find((result) => result.error)?.error;
+        if (stockUpdateError) return setFormError(toUserError(stockUpdateError, "更新股票產業別失敗。"));
+        const { error: tradeInsertError } = await client.from("trades").insert(nextTrades.filter((trade) => !trades.some((old) => old.id === trade.id)));
+        if (tradeInsertError) return setFormError(toUserError(tradeInsertError, "匯入交易失敗。"));
         for (const portfolio of nextPortfolios) {
           const old = portfolios.find((item) => item.id === portfolio.id);
           if (old && old.cash_balance !== portfolio.cash_balance) {
-            await client.from("portfolios").update({ cash_balance: portfolio.cash_balance, updated_at: portfolio.updated_at }).eq("id", portfolio.id);
+            const { error: portfolioError } = await client.from("portfolios").update({ cash_balance: portfolio.cash_balance, updated_at: portfolio.updated_at }).eq("id", portfolio.id);
+            if (portfolioError) return setFormError(toUserError(portfolioError, "更新帳本現金失敗。"));
           }
         }
       }
@@ -1316,6 +1321,7 @@ export default function StockLedgerApp() {
         importedCount,
         skipped
       });
+      await reloadCloudDataAfterWrite();
       setMessage(
         "匯入成功：新增 " +
           importedCount +
@@ -1495,6 +1501,7 @@ export default function StockLedgerApp() {
       setStocks(nextStocks);
       setPositionAdjustments(nextAdjustments);
       setStockTags(nextTags);
+      await reloadCloudDataAfterWrite();
       setMessage("持股匯入成功：更新 " + affectedStockIds.size + " 檔、略過 " + skipped.length + " 筆。");
     } catch (error) {
       console.error("Failed to import holdings CSV", error);
@@ -1822,7 +1829,7 @@ export default function StockLedgerApp() {
       {confirmState?.kind === "importJson" && (
         <ConfirmSheet
           title="匯入 JSON 備份"
-          body="匯入備份會覆蓋目前本機畫面資料。若要保留現在內容，請先匯出 JSON。"
+          body="匯入備份只會覆蓋本機 demo 畫面資料，不會同步到 Supabase。若要保留現在內容，請先匯出 JSON。"
           confirmLabel="確認匯入"
           tone="primary"
           onCancel={() => setConfirmState(null)}
