@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { currency, percent, profitClass } from "@/lib/format";
-import { groupByValue, roundMoney } from "@/lib/calculations";
+import { compareTradesChronologically, groupByValue, roundMoney } from "@/lib/calculations";
 import type { Portfolio, Position, Stock, Trade } from "@/lib/types";
 import { PortfolioScopePicker, SmallCard } from "./ui";
 
@@ -41,13 +41,15 @@ export function Analytics({
   const [profitVisibleCount, setProfitVisibleCount] = useState(5);
   const [contributionGroup, setContributionGroup] = useState<ContributionGroup>("stock");
   const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>({});
+  const [expandedContributionKeys, setExpandedContributionKeys] = useState<Record<string, boolean>>({});
+  const [expandedHoldingKeys, setExpandedHoldingKeys] = useState<Record<string, boolean>>({});
 
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
-    openPositions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
+    positions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
     return [...tags].sort((a, b) => a.localeCompare(b, "zh-Hant"));
-  }, [openPositions]);
+  }, [positions]);
 
   const filteredPositions = useMemo(
     () => (tagFilter === "all" ? openPositions : openPositions.filter((position) => position.tags.includes(tagFilter))),
@@ -57,10 +59,26 @@ export function Analytics({
     () => (tagFilter === "all" ? positions : positions.filter((position) => position.tags.includes(tagFilter))),
     [positions, tagFilter]
   );
+  const profitPositionByStockId = useMemo(() => {
+    const map = new Map<string, Position>();
+    for (const position of filteredProfitPositions) {
+      const current = map.get(position.stock_id);
+      if (!current) {
+        map.set(position.stock_id, position);
+        continue;
+      }
+      if (position.quantity > 0 && current.quantity <= 0) {
+        map.set(position.stock_id, position);
+      }
+    }
+    return map;
+  }, [filteredProfitPositions]);
 
   useEffect(() => {
     setConcentrationVisibleCount(5);
     setProfitVisibleCount(5);
+    setExpandedContributionKeys({});
+    setExpandedHoldingKeys({});
   }, [tagFilter, analysisBasis, profitMode, selectedPortfolioId, contributionGroup]);
 
   useEffect(() => {
@@ -82,6 +100,14 @@ export function Analytics({
 
   function toggleCard(key: string) {
     setCollapsedCards((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function toggleContributionRow(key: string) {
+    setExpandedContributionKeys((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function toggleHoldingRow(key: string) {
+    setExpandedHoldingKeys((current) => ({ ...current, [key]: !current[key] }));
   }
 
   function setAllCardsCollapsed(nextCollapsed: boolean) {
@@ -185,7 +211,7 @@ export function Analytics({
       { name: "ETF", value: 0 },
       { name: "個股", value: 0 }
     ];
-    const sourcePositions = profitMode === "realized" ? filteredProfitPositions : filteredPositions;
+    const sourcePositions = filteredPositions;
     for (const position of sourcePositions) {
       const bucket = isEtfPosition(position) ? rows[0] : rows[1];
       bucket.value = roundMoney(bucket.value + getPositionBasisValue(position, analysisBasis));
@@ -277,7 +303,108 @@ export function Analytics({
 
   const allCardsCollapsed = COLLAPSIBLE_CARD_KEYS.every((key) => collapsedCards[key]);
 
+  const realizedStockRows = useMemo(() => {
+    const stateByKey = new Map<string, { quantity: number; cost: number }>();
+    const grouped = new Map<
+      string,
+      {
+        key: string;
+        label: string;
+        realized: number;
+        soldCost: number;
+        details: ContributionDetailRow[];
+        tags: string[];
+        industry: string;
+      }
+    >();
+
+    for (const trade of [...trades].sort(compareTradesChronologically)) {
+      const key = `${trade.portfolio_id}:${trade.stock_id}`;
+      const state = stateByKey.get(key) ?? { quantity: 0, cost: 0 };
+
+      if (trade.type === "buy") {
+        state.quantity = roundMoney(state.quantity + trade.quantity);
+        state.cost = roundMoney(state.cost + trade.net_amount);
+        stateByKey.set(key, state);
+        continue;
+      }
+
+      const averageCost = state.quantity > 0 ? state.cost / state.quantity : 0;
+      const soldCost = roundMoney(averageCost * trade.quantity);
+      const profit = roundMoney(trade.net_amount - soldCost);
+      state.quantity = roundMoney(state.quantity - trade.quantity);
+      state.cost = roundMoney(state.cost - soldCost);
+      stateByKey.set(key, state);
+
+      const meta = profitPositionByStockId.get(trade.stock_id);
+      const symbol = meta?.symbol || trade.stock?.symbol || "";
+      const name = meta?.name || trade.stock?.name || symbol;
+      const industry = meta?.industry || "未分類";
+      const tags = meta?.tags ?? [];
+      const current = grouped.get(trade.stock_id) ?? {
+        key: trade.stock_id,
+        label: `${symbol} ${name}`.trim(),
+        realized: 0,
+        soldCost: 0,
+        details: [],
+        tags,
+        industry
+      };
+      current.realized = roundMoney(current.realized + profit);
+      current.soldCost = roundMoney(current.soldCost + soldCost);
+      current.tags = current.tags.length ? current.tags : tags;
+      current.industry = current.industry || industry;
+      current.details.push({
+        key: trade.id,
+        symbol,
+        name,
+        metricValue: profit,
+        returnRate: soldCost > 0 ? profit / soldCost : 0,
+        quantityText: `${trade.quantity} 股`,
+        costText: currency(soldCost),
+        shareText: ""
+      });
+      grouped.set(trade.stock_id, current);
+    }
+
+    const rows = [...grouped.values()]
+      .filter((item) => item.realized !== 0)
+      .sort((a, b) => b.realized - a.realized)
+      .map((item) => ({
+        key: item.key,
+        label: item.label,
+        value: item.realized,
+        returnRate: item.soldCost > 0 ? item.realized / item.soldCost : 0,
+        ratio: 0,
+        subtitle: `已賣出成本 ${currency(item.soldCost)}`,
+        details: item.details
+          .sort((a, b) => b.metricValue - a.metricValue)
+          .map((detail) => ({
+            ...detail,
+            shareText: Math.abs(item.realized) > 0 ? `佔此標的 ${percent(Math.abs(detail.metricValue) / Math.abs(item.realized))}` : "佔此標的 0.00%"
+          })),
+        tags: item.tags,
+        industry: item.industry
+      }));
+
+    if (tagFilter === "all") return rows;
+    return rows.filter((item) => (item.tags.length ? item.tags.includes(tagFilter) : tagFilter === "未標籤"));
+  }, [profitPositionByStockId, tagFilter, trades]);
+
   const stockProfitRows = useMemo(() => {
+    if (profitMode === "realized") {
+      return realizedStockRows.map((item) => ({
+        key: item.key,
+        label: item.label,
+        realized: item.value,
+        unrealized: 0,
+        returnRate: item.returnRate,
+        marketValue: 0,
+        basisValue: 0,
+        details: item.details
+      }));
+    }
+    const sourcePositions = filteredPositions;
     const grouped = new Map<
       string,
       {
@@ -287,95 +414,250 @@ export function Analytics({
         unrealized: number;
         returnRate: number;
         marketValue: number;
+        basisValue: number;
+        details: ContributionDetailRow[];
       }
     >();
 
-    for (const position of filteredPositions) {
+    for (const position of sourcePositions) {
+      const valueBasis = getPositionBasisValue(position, analysisBasis);
+      const metricValue = position.unrealized_profit;
       const current = grouped.get(position.stock_id) ?? {
         key: position.stock_id,
         label: position.symbol + " " + position.name,
         realized: 0,
         unrealized: 0,
         returnRate: 0,
-        marketValue: 0
+        marketValue: 0,
+        basisValue: 0,
+        details: []
       };
       current.realized = roundMoney(current.realized + position.realized_profit);
       current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
       current.marketValue = roundMoney(current.marketValue + position.market_value);
-      current.returnRate = position.unrealized_return_rate;
+      current.basisValue = roundMoney(current.basisValue + valueBasis);
+      current.returnRate = current.basisValue > 0 ? roundMoney(current.unrealized / current.basisValue) : 0;
+      current.details = [
+        {
+          key: position.stock_id,
+          symbol: position.symbol,
+          name: position.name,
+          metricValue,
+          returnRate: valueBasis > 0 ? metricValue / valueBasis : 0,
+          quantityText: `${position.quantity} 股`,
+          costText: currency(position.holding_cost),
+          shareText: "單一標的"
+        }
+      ];
       grouped.set(position.stock_id, current);
     }
 
     return [...grouped.values()]
       .filter((item) => item.realized !== 0 || item.unrealized !== 0)
-      .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized));
-  }, [filteredPositions, filteredProfitPositions, profitMode]);
+      .sort((a, b) => b.unrealized - a.unrealized);
+  }, [analysisBasis, filteredPositions, realizedStockRows]);
 
   const contributionRows = useMemo(() => {
     const metricKey = profitMode === "realized" ? "realized" : "unrealized";
+    const sourcePositions = profitMode === "realized" ? filteredProfitPositions : filteredPositions;
+    const totalContribution = (rows: { value: number }[]) => rows.reduce((sum, item) => sum + Math.abs(item.value), 0);
 
     if (contributionGroup === "stock") {
-      return stockProfitRows.map((item) => ({
+      const rows = stockProfitRows.map((item) => ({
         key: item.key,
         label: item.label,
         value: item[metricKey],
-        subtitle: metricKey === "realized" ? `市值 ${currency(item.marketValue)}` : `市值 ${currency(item.marketValue)} · 報酬率 ${percent(item.returnRate)}`
+        returnRate: item.returnRate,
+        ratio: 0,
+        subtitle: `市值 ${currency(item.marketValue)}`,
+        details: item.details
+      }));
+      const contributionTotal = totalContribution(rows);
+      return rows.map((item) => ({
+        ...item,
+        ratio: contributionTotal > 0 ? Math.abs(item.value) / contributionTotal : 0
       }));
     }
 
     if (contributionGroup === "industry") {
-      const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number }>();
-      const sourcePositions = profitMode === "realized" ? filteredProfitPositions : filteredPositions;
+      if (profitMode === "realized") {
+        const grouped = new Map<string, { key: string; label: string; value: number; soldCost: number; details: ContributionDetailRow[]; count: number }>();
+        for (const row of realizedStockRows) {
+          const meta = profitPositionByStockId.get(row.key);
+          const label = meta?.industry || row.industry || "未分類";
+          const current = grouped.get(label) ?? { key: label, label, value: 0, soldCost: 0, details: [], count: 0 };
+          current.value = roundMoney(current.value + row.value);
+          current.soldCost = roundMoney(current.soldCost + sumContributionSoldCost(row.details));
+          current.details.push(
+            ...row.details.map((detail) => ({
+              ...detail,
+              symbol: row.label.split(" ")[0] || detail.symbol,
+              name: row.label.replace((row.label.split(" ")[0] || "") + " ", "") || detail.name
+            }))
+          );
+          current.count += 1;
+          grouped.set(label, current);
+        }
+        const rows = [...grouped.values()]
+          .filter((item) => item.value !== 0)
+          .sort((a, b) => b.value - a.value)
+          .map((item) => ({
+            key: item.key,
+            label: item.label,
+            value: item.value,
+            returnRate: item.soldCost > 0 ? item.value / item.soldCost : 0,
+            ratio: 0,
+            subtitle: `涵蓋 ${item.count} 檔已賣出股票`,
+            details: item.details
+              .sort((a, b) => b.metricValue - a.metricValue)
+              .map((detail) => ({
+                ...detail,
+                shareText: Math.abs(item.value) > 0 ? `佔此類別 ${percent(Math.abs(detail.metricValue) / Math.abs(item.value))}` : "佔此類別 0.00%"
+              }))
+          }));
+        const contributionTotal = totalContribution(rows);
+        return rows.map((item) => ({ ...item, ratio: contributionTotal > 0 ? Math.abs(item.value) / contributionTotal : 0 }));
+      }
+      const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number; basisValue: number; details: ContributionDetailRow[] }>();
       for (const position of sourcePositions) {
+        const metricValue = position.unrealized_profit;
+        const basisValue = getPositionBasisValue(position, analysisBasis);
         const current = grouped.get(position.industry) ?? {
           label: position.industry,
           realized: 0,
           unrealized: 0,
-          count: 0
+          count: 0,
+          basisValue: 0,
+          details: []
         };
         current.realized = roundMoney(current.realized + position.realized_profit);
         current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
+        current.basisValue = roundMoney(current.basisValue + basisValue);
         current.count += 1;
+        current.details.push({
+          key: position.stock_id,
+          symbol: position.symbol,
+          name: position.name,
+          metricValue,
+          returnRate: basisValue > 0 ? metricValue / basisValue : 0,
+          quantityText: `${position.quantity} 股`,
+          costText: currency(position.holding_cost),
+          shareText: ""
+        });
         grouped.set(position.industry, current);
       }
-      return [...grouped.values()]
+      const rows = [...grouped.values()]
         .filter((item) => item.realized !== 0 || item.unrealized !== 0)
-        .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized))
-        .map((item) => ({
-          key: item.label,
-          label: item.label,
-          value: item[metricKey],
-          subtitle: `涵蓋 ${item.count} 檔持股`
-        }));
+        .sort((a, b) => b.unrealized - a.unrealized)
+        .map((item) => {
+          const value = item.unrealized;
+          return {
+            key: item.label,
+            label: item.label,
+            value,
+            returnRate: item.basisValue > 0 ? value / item.basisValue : 0,
+            ratio: 0,
+            subtitle: `涵蓋 ${item.count} 檔持股`,
+            details: item.details
+              .sort((a, b) => b.metricValue - a.metricValue)
+              .map((detail) => ({
+                ...detail,
+                shareText: Math.abs(value) > 0 ? `佔此類別 ${percent(Math.abs(detail.metricValue) / Math.abs(value))}` : "佔此類別 0.00%"
+              }))
+          };
+        });
+      const contributionTotal = totalContribution(rows);
+      return rows.map((item) => ({ ...item, ratio: contributionTotal > 0 ? Math.abs(item.value) / contributionTotal : 0 }));
     }
 
-    const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number }>();
-    const sourcePositions = profitMode === "realized" ? filteredProfitPositions : filteredPositions;
+    if (profitMode === "realized") {
+      const grouped = new Map<string, { key: string; label: string; value: number; soldCost: number; details: ContributionDetailRow[]; count: number }>();
+      for (const row of realizedStockRows) {
+        const tags = row.tags.length ? row.tags : ["未標籤"];
+        for (const tag of tags) {
+          const current = grouped.get(tag) ?? { key: tag, label: tag, value: 0, soldCost: 0, details: [], count: 0 };
+          current.value = roundMoney(current.value + row.value);
+          current.soldCost = roundMoney(current.soldCost + sumContributionSoldCost(row.details));
+          current.details.push(...row.details);
+          current.count += 1;
+          grouped.set(tag, current);
+        }
+      }
+      const rows = [...grouped.values()]
+        .filter((item) => item.value !== 0)
+        .sort((a, b) => b.value - a.value)
+        .map((item) => ({
+          key: item.key,
+          label: item.label,
+          value: item.value,
+          returnRate: item.soldCost > 0 ? item.value / item.soldCost : 0,
+          ratio: 0,
+          subtitle: `涵蓋 ${item.count} 檔已賣出股票`,
+          details: item.details
+            .sort((a, b) => b.metricValue - a.metricValue)
+            .map((detail) => ({
+              ...detail,
+              shareText: Math.abs(item.value) > 0 ? `佔此標籤 ${percent(Math.abs(detail.metricValue) / Math.abs(item.value))}` : "佔此標籤 0.00%"
+            }))
+        }));
+      const contributionTotal = totalContribution(rows);
+      return rows.map((item) => ({ ...item, ratio: contributionTotal > 0 ? Math.abs(item.value) / contributionTotal : 0 }));
+    }
+
+    const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number; basisValue: number; details: ContributionDetailRow[] }>();
     for (const position of sourcePositions) {
+      const metricValue = position.unrealized_profit;
+      const basisValue = getPositionBasisValue(position, analysisBasis);
       const tags = position.tags.length ? position.tags : ["未標籤"];
       for (const tag of tags) {
         const current = grouped.get(tag) ?? {
           label: tag,
           realized: 0,
           unrealized: 0,
-          count: 0
+          count: 0,
+          basisValue: 0,
+          details: []
         };
         current.realized = roundMoney(current.realized + position.realized_profit);
         current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
+        current.basisValue = roundMoney(current.basisValue + basisValue);
         current.count += 1;
+        current.details.push({
+          key: `${position.stock_id}:${tag}`,
+          symbol: position.symbol,
+          name: position.name,
+          metricValue,
+          returnRate: basisValue > 0 ? metricValue / basisValue : 0,
+          quantityText: `${position.quantity} 股`,
+          costText: currency(position.holding_cost),
+          shareText: ""
+        });
         grouped.set(tag, current);
       }
     }
-    return [...grouped.values()]
+    const rows = [...grouped.values()]
       .filter((item) => item.realized !== 0 || item.unrealized !== 0)
-      .sort((a, b) => (profitMode === "realized" ? b.realized - a.realized : b.unrealized - a.unrealized))
-      .map((item) => ({
-        key: item.label,
-        label: item.label,
-        value: item[metricKey],
-        subtitle: `涵蓋 ${item.count} 檔持股`
-      }));
-  }, [filteredPositions, filteredProfitPositions, profitMode, contributionGroup, stockProfitRows]);
+      .sort((a, b) => b.unrealized - a.unrealized)
+      .map((item) => {
+        const value = item.unrealized;
+        return {
+          key: item.label,
+          label: item.label,
+          value,
+          returnRate: item.basisValue > 0 ? value / item.basisValue : 0,
+          ratio: 0,
+          subtitle: `涵蓋 ${item.count} 檔持股`,
+          details: item.details
+            .sort((a, b) => b.metricValue - a.metricValue)
+            .map((detail) => ({
+              ...detail,
+              shareText: Math.abs(value) > 0 ? `佔此標籤 ${percent(Math.abs(detail.metricValue) / Math.abs(value))}` : "佔此標籤 0.00%"
+            }))
+        };
+      });
+    const contributionTotal = totalContribution(rows);
+    return rows.map((item) => ({ ...item, ratio: contributionTotal > 0 ? Math.abs(item.value) / contributionTotal : 0 }));
+  }, [analysisBasis, filteredPositions, filteredProfitPositions, profitMode, contributionGroup, stockProfitRows, realizedStockRows, profitPositionByStockId]);
 
   return (
     <div className="space-y-4">
@@ -518,12 +800,45 @@ export function Analytics({
         </div>
         <div className="mt-3 space-y-3">
           {contributionRows.slice(0, profitVisibleCount).map((item) => (
-            <div key={item.key} className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3">
-              <div className="min-w-0">
-                <p className="truncate font-semibold">{item.label}</p>
-                <p className="mt-1 truncate text-sm text-ink/55">{item.subtitle}</p>
-              </div>
-              <p className={"shrink-0 text-sm font-bold " + profitClass(item.value)}>{currency(item.value)}</p>
+            <div key={item.key} className={"rounded-xl border px-3 py-3 " + (expandedContributionKeys[item.key] ? "border-mint/20 bg-mint/5" : "border-ink/6 bg-paper")}>
+              <button type="button" className="w-full text-left" onClick={() => toggleContributionRow(item.key)}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <p className="truncate font-semibold">{item.label}</p>
+                      <span className="shrink-0 text-ink/45">{expandedContributionKeys[item.key] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+                    </div>
+                    <p className={"mt-1 truncate text-sm font-semibold " + profitClass(item.value)}>{currency(item.value)} · 報酬率 {percent(item.returnRate)}</p>
+                    <p className="mt-1 truncate text-xs text-ink/50">{item.subtitle}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-paper px-3 py-1.5 text-sm font-bold tabular-nums text-ink">{percent(item.ratio)}</span>
+                </div>
+              </button>
+              {expandedContributionKeys[item.key] ? (
+                <div className="mt-3 space-y-2 rounded-xl border border-ink/8 bg-paper/45 p-3">
+                  {item.details.length ? (
+                    item.details.map((detail) => (
+                      <div key={detail.key} className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-ink">
+                            {detail.symbol} {detail.name}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-ink/45">
+                            {detail.quantityText} · 持有成本 {detail.costText}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className={"text-sm font-bold " + profitClass(detail.metricValue)}>{currency(detail.metricValue)}</p>
+                          <p className={"mt-1 text-xs " + profitClass(detail.metricValue)}>報酬率 {percent(detail.returnRate)}</p>
+                          <p className="mt-1 text-[11px] text-ink/45">{detail.shareText}</p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-ink/55">尚無可顯示明細</p>
+                  )}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -577,14 +892,35 @@ export function Analytics({
         </div>
         <div className="mt-3 space-y-2">
           {sortedPositions.slice(0, concentrationVisibleCount).map((position, index) => (
-            <div className="flex items-center justify-between gap-3 rounded-md bg-paper px-3 py-3 text-sm" key={position.stock_id}>
-              <div className="min-w-0">
-                <p className="truncate font-semibold">
-                  #{index + 1} {position.symbol} {position.name}
-                </p>
-                <p className="mt-1 truncate text-ink/55">{currency(getPositionBasisValue(position, analysisBasis))} · {position.industry}</p>
-              </div>
-              <p className="shrink-0 font-bold">{percent(holdingsBasisTotal > 0 ? getPositionBasisValue(position, analysisBasis) / holdingsBasisTotal : 0)}</p>
+            <div className={"rounded-xl border px-3 py-3 text-sm " + (expandedHoldingKeys[position.stock_id] ? "border-mint/20 bg-mint/5" : "border-ink/6 bg-paper")} key={position.stock_id}>
+              <button type="button" className="w-full text-left" onClick={() => toggleHoldingRow(position.stock_id)}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <p className="truncate font-semibold">
+                        #{index + 1} {position.symbol} {position.name}
+                      </p>
+                      <span className="shrink-0 text-ink/45">{expandedHoldingKeys[position.stock_id] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
+                    </div>
+                    <p className="mt-1 truncate text-ink/55">{currency(getPositionBasisValue(position, analysisBasis))} · {position.industry}</p>
+                  </div>
+                  <p className="shrink-0 font-bold">{percent(holdingsBasisTotal > 0 ? getPositionBasisValue(position, analysisBasis) / holdingsBasisTotal : 0)}</p>
+                </div>
+              </button>
+              {expandedHoldingKeys[position.stock_id] ? (
+                <div className="mt-3 rounded-xl border border-ink/8 bg-paper/45 p-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <MetricTile label="持有股數" value={`${position.quantity} 股`} />
+                    <MetricTile label="持有成本" value={currency(position.holding_cost)} />
+                    <MetricTile label="未實現損益" value={currency(position.unrealized_profit)} valueClass={profitClass(position.unrealized_profit)} />
+                    <MetricTile label="報酬率" value={percent(position.unrealized_return_rate)} valueClass={profitClass(position.unrealized_profit)} />
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-ink/55">
+                    <span className="rounded-full bg-white px-2.5 py-1">{position.industry}</span>
+                    {position.tags.length ? position.tags.map((tag) => <span key={tag} className="rounded-full bg-white px-2.5 py-1">{tag}</span>) : <span className="rounded-full bg-white px-2.5 py-1">未標籤</span>}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -1098,6 +1434,26 @@ type DetailPositionRow = {
   ratioOfGroup: number;
   ratioOfPortfolio: number;
 };
+
+type ContributionDetailRow = {
+  key: string;
+  symbol: string;
+  name: string;
+  metricValue: number;
+  returnRate: number;
+  quantityText: string;
+  costText: string;
+  shareText: string;
+};
+
+function sumContributionSoldCost(details: ContributionDetailRow[]) {
+  return roundMoney(
+    details.reduce((sum, detail) => {
+      const normalized = Number(detail.costText.replace(/[$,]/g, ""));
+      return sum + (Number.isFinite(normalized) ? normalized : 0);
+    }, 0)
+  );
+}
 
 function buildDetailLookup(
   groups: { name: string }[],

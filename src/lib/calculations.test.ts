@@ -203,6 +203,35 @@ describe("buildPositions", () => {
     expect(positions[0].holding_cost).toBe(7200);
   });
 
+  it("treats position adjustment as baseline and applies later trades on top", () => {
+    const adjustments: PositionAdjustment[] = [
+      {
+        id: "adj-1",
+        user_id: "user-1",
+        portfolio_id: "portfolio-1",
+        stock_id: "stock-1",
+        adjusted_quantity: 80,
+        adjusted_cost: 8640,
+        created_at: "2026-01-02T10:00:00.000Z",
+        updated_at: "2026-01-02T10:00:00.000Z"
+      }
+    ];
+
+    const positions = buildPositions(
+      [
+        trade({ id: "buy-old", quantity: 100, gross_amount: 10000, fee: 12.83, net_amount: 10012.83, created_at: "2026-01-01T09:00:00.000Z" }),
+        trade({ id: "buy-new", traded_at: "2026-01-03", quantity: 20, gross_amount: 2400, fee: 12.83, net_amount: 2412.83, created_at: "2026-01-03T09:00:00.000Z" })
+      ],
+      [stock],
+      [],
+      adjustments
+    );
+
+    expect(positions[0].quantity).toBe(100);
+    expect(positions[0].holding_cost).toBe(11052.83);
+    expect(positions[0].average_cost).toBe(110.4);
+  });
+
   it("includes buy fees in holding cost while keeping average cost fee-free", () => {
     const positions = buildPositions([trade({ quantity: 100, gross_amount: 10000, fee: 12.83, net_amount: 10012.83 })], [stock]);
 

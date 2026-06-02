@@ -101,6 +101,7 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
   }, new Map());
 
   const sortedTrades = [...trades].sort(compareTradesChronologically);
+  const tradesByKey = new Map<string, Trade[]>();
 
   const drafts = new Map<
     string,
@@ -118,6 +119,9 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
 
   for (const trade of sortedTrades) {
     const key = `${trade.portfolio_id}:${trade.stock_id}`;
+    const currentTrades = tradesByKey.get(key) ?? [];
+    currentTrades.push(trade);
+    tradesByKey.set(key, currentTrades);
     const draft =
       drafts.get(key) ??
       {
@@ -155,34 +159,44 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
 
   for (const adjustment of adjustmentsByKey.values()) {
     const key = `${adjustment.portfolio_id}:${adjustment.stock_id}`;
-    if (drafts.has(key)) continue;
-    drafts.set(key, {
-      portfolio_id: adjustment.portfolio_id,
-      stock_id: adjustment.stock_id,
+    const existingDraft =
+      drafts.get(key) ??
+      {
+        portfolio_id: adjustment.portfolio_id,
+        stock_id: adjustment.stock_id,
+        quantity: 0,
+        remaining_cost: 0,
+        remaining_principal: 0,
+        paid_fee: 0,
+        paid_tax: 0,
+        realized_profit: 0
+      };
+
+    const rebasedDraft = {
+      ...existingDraft,
       quantity: adjustment.adjusted_quantity,
       remaining_cost: adjustment.adjusted_cost,
-      remaining_principal: adjustment.adjusted_cost,
-      paid_fee: 0,
-      paid_tax: 0,
-      realized_profit: 0
-    });
+      remaining_principal: adjustment.adjusted_cost
+    };
+
+    const rebasedTrades = (tradesByKey.get(key) ?? []).filter((trade) => tradeCreatedAtMs(trade) > adjustmentUpdatedAtMs(adjustment));
+    for (const trade of rebasedTrades) {
+      applyTradeToOpenState(rebasedDraft, trade);
+    }
+
+    drafts.set(key, rebasedDraft);
   }
 
   return [...drafts.values()]
     .filter((draft) => {
-      const key = `${draft.portfolio_id}:${draft.stock_id}`;
-      const adjustment = adjustmentsByKey.get(key);
-      const quantity = adjustment ? adjustment.adjusted_quantity : draft.quantity;
-      return quantity > 0 || draft.realized_profit !== 0;
+      return draft.quantity > 0 || draft.realized_profit !== 0;
     })
     .map((draft) => {
-      const key = `${draft.portfolio_id}:${draft.stock_id}`;
-      const adjustment = adjustmentsByKey.get(key);
       const stock = stocksById.get(draft.stock_id);
       const currentPrice = stock?.current_price ?? 0;
-      const openQuantity = Math.max(roundMoney(adjustment?.adjusted_quantity ?? draft.quantity), 0);
-      const openCost = Math.max(roundMoney(adjustment?.adjusted_cost ?? draft.remaining_cost), 0);
-      const openPrincipal = Math.max(roundMoney(adjustment ? adjustment.adjusted_cost : draft.remaining_principal), 0);
+      const openQuantity = Math.max(roundMoney(draft.quantity), 0);
+      const openCost = Math.max(roundMoney(draft.remaining_cost), 0);
+      const openPrincipal = Math.max(roundMoney(draft.remaining_principal), 0);
       const marketValue = roundMoney(openQuantity * currentPrice);
       const unrealizedProfit = roundMoney(marketValue - openCost);
       const totalProfit = roundMoney(draft.realized_profit + unrealizedProfit);
@@ -225,6 +239,44 @@ function latestAdjustmentsByKey(positionAdjustments: PositionAdjustment[]) {
   }
 
   return adjustmentsByKey;
+}
+
+function tradeCreatedAtMs(trade: Trade) {
+  const createdAtMs = new Date(trade.created_at).getTime();
+  if (Number.isFinite(createdAtMs)) return createdAtMs;
+  return new Date(`${trade.traded_at}T23:59:59.999Z`).getTime();
+}
+
+function adjustmentUpdatedAtMs(adjustment: PositionAdjustment) {
+  const updatedAtMs = new Date(adjustment.updated_at).getTime();
+  if (Number.isFinite(updatedAtMs)) return updatedAtMs;
+  const createdAtMs = new Date(adjustment.created_at).getTime();
+  if (Number.isFinite(createdAtMs)) return createdAtMs;
+  return Number.POSITIVE_INFINITY;
+}
+
+function applyTradeToOpenState(
+  draft: {
+    quantity: number;
+    remaining_cost: number;
+    remaining_principal: number;
+  },
+  trade: Trade
+) {
+  if (trade.type === "buy") {
+    draft.quantity = roundMoney(draft.quantity + trade.quantity);
+    draft.remaining_cost = roundMoney(draft.remaining_cost + trade.net_amount);
+    draft.remaining_principal = roundMoney(draft.remaining_principal + trade.gross_amount);
+    return;
+  }
+
+  const averageCost = draft.quantity > 0 ? draft.remaining_cost / draft.quantity : 0;
+  const averagePrincipal = draft.quantity > 0 ? draft.remaining_principal / draft.quantity : 0;
+  const soldCost = roundMoney(averageCost * trade.quantity);
+  const soldPrincipal = roundMoney(averagePrincipal * trade.quantity);
+  draft.quantity = roundMoney(draft.quantity - trade.quantity);
+  draft.remaining_cost = roundMoney(draft.remaining_cost - soldCost);
+  draft.remaining_principal = roundMoney(draft.remaining_principal - soldPrincipal);
 }
 
 export function validateSellQuantity(trades: Trade[], stockId: string, portfolioId: string, sellQuantity: number) {

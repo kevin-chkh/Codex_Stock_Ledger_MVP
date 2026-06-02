@@ -941,34 +941,32 @@ export default function StockLedgerApp() {
       return setFormError("現金餘額不足。可到設定開啟允許負現金。");
     }
 
-      const tradeBase = makeTrade({
-        id: uid(),
-        userId: userId ?? "demo",
+    const tradeBase = makeTrade({
+      id: uid(),
+      userId: userId ?? "demo",
       portfolioId: portfolio.id,
       stockId: stock.id,
-        type: parsed.data.type,
-        quantity: parsed.data.quantity,
-        unitPrice: parsed.data.unitPrice,
-        settings,
-        tradedAt: parsed.data.tradedAt,
-        createdAt: new Date().toISOString(),
-        note: null
-      });
-      const trade: Trade = editingTrade
-        ? { ...tradeBase, id: editingTrade.id, created_at: editingTrade.created_at }
-        : tradeBase;
+      type: parsed.data.type,
+      quantity: parsed.data.quantity,
+      unitPrice: parsed.data.unitPrice,
+      settings,
+      tradedAt: parsed.data.tradedAt,
+      createdAt: new Date().toISOString(),
+      note: null
+    });
+    const trade: Trade = editingTrade
+      ? { ...tradeBase, id: editingTrade.id, created_at: editingTrade.created_at }
+      : tradeBase;
     const nextTrades = editingTrade ? trades.map((item) => (item.id === trade.id ? trade : item)) : [trade, ...trades];
-    const hasPositionAdjustment = positionAdjustments.some((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id);
     const shouldValidateOversold =
-      !hasPositionAdjustment &&
-      (parsed.data.type === "sell" ||
-        Boolean(
-          editingTrade &&
-            (editingTrade.type === "sell" ||
-              editingTrade.quantity > parsed.data.quantity ||
-              editingTrade.stock_id !== stock.id ||
-              editingTrade.portfolio_id !== portfolio.id)
-        ));
+      parsed.data.type === "sell" ||
+      Boolean(
+        editingTrade &&
+          (editingTrade.type === "sell" ||
+            editingTrade.quantity > parsed.data.quantity ||
+            editingTrade.stock_id !== stock.id ||
+            editingTrade.portfolio_id !== portfolio.id)
+      );
     if (shouldValidateOversold && hasOversoldPosition(nextTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
       return setFormError("此修改會造成某檔股票賣出股數超過持有股數，請先調整相關交易。");
     }
