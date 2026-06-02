@@ -20,7 +20,7 @@ import { calculateDashboardMetrics, calculateTradeAmounts, DEFAULT_SETTINGS, bui
 import { parseCsv } from "@/lib/csv";
 import { currency, parseTags, profitClass } from "@/lib/format";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
-import { loadStockCatalog, type StockCatalogItem } from "@/lib/stock-lookup";
+import { findStockBySymbol, loadStockCatalog, type StockCatalogItem } from "@/lib/stock-lookup";
 import { buildPortfolioUpdates, deleteTradeFromPortfolios, hasOversoldPosition, makeTrade, tradeCashImpact } from "@/lib/trade-ledger";
 import type { CashMovement, CashMovementType, Portfolio, Position, PositionAdjustment, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
 import { Dashboard } from "@/components/stock-ledger/dashboard";
@@ -377,6 +377,26 @@ export default function StockLedgerApp() {
       setStockCatalog(result.catalog);
       setCatalogSource(result.source);
       const catalogBySymbol = new Map(result.catalog.map((item) => [item.symbol, item]));
+      if (supabase && hasSupabaseEnv) {
+        const updates = stocks
+          .map((stock) => {
+            const catalogItem = catalogBySymbol.get(stock.symbol);
+            if (!catalogItem) return null;
+            const industry = resolveIndustryValue(stock.industry, catalogItem.industry);
+            const name = catalogItem.name || stock.name;
+            const market = catalogItem.market || stock.market;
+            if (industry === stock.industry && name === stock.name && market === stock.market) return null;
+            return { ...stock, name, market, industry, updated_at: new Date().toISOString() };
+          })
+          .filter((stock): stock is Stock => Boolean(stock));
+
+        for (const stock of updates) {
+          await supabase
+            .from("stocks")
+            .update({ name: stock.name, market: stock.market, industry: stock.industry, updated_at: stock.updated_at })
+            .eq("id", stock.id);
+        }
+      }
       setStocks((current) =>
         current.map((stock) => {
           const catalogItem = catalogBySymbol.get(stock.symbol);
@@ -403,10 +423,35 @@ export default function StockLedgerApp() {
     }
   }
 
+  async function getCatalogForSymbols(symbols: string[]) {
+    const normalizedSymbols = [...new Set(symbols.map((symbol) => symbol.trim()).filter(Boolean))];
+    const needsRefresh = normalizedSymbols.some((symbol) => !hasResolvedIndustry(findStockBySymbol(stockCatalog, symbol)?.industry));
+    if (!needsRefresh) return stockCatalog;
+
+    try {
+      const result = await loadStockCatalog();
+      setStockCatalog(result.catalog);
+      setCatalogSource(result.source);
+      return result.catalog;
+    } catch (error) {
+      console.error("Failed to ensure stock catalog", error);
+      return stockCatalog;
+    }
+  }
+
   async function refreshQuotes(showResultMessage = true) {
     if (!stocks.length) {
       if (showResultMessage) setMessage("尚無股票可更新現價。");
       return;
+    }
+
+    await refreshQuotesForStocks(stocks, showResultMessage);
+  }
+
+  async function refreshQuotesForStocks(targetStocks: Stock[], showResultMessage = true) {
+    if (!targetStocks.length) {
+      if (showResultMessage) setMessage("尚無股票可更新現價。");
+      return false;
     }
 
     setQuoteRefreshing(true);
@@ -415,7 +460,7 @@ export default function StockLedgerApp() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          items: stocks.map((stock) => ({
+          items: targetStocks.map((stock) => ({
             symbol: stock.symbol,
             market: catalogBySymbol.get(stock.symbol)?.market || stock.market || "TWSE"
           }))
@@ -428,7 +473,7 @@ export default function StockLedgerApp() {
       const now = new Date().toISOString();
       let updatedCount = 0;
 
-      const nextStocks = stocks.map((stock) => {
+      const nextTargetStocks = targetStocks.map((stock) => {
         const quote = quoteMap.get(stock.symbol);
         if (!quote) return stock;
         updatedCount += 1;
@@ -442,11 +487,11 @@ export default function StockLedgerApp() {
       });
 
       if (updatedCount && supabase && hasSupabaseEnv) {
-        const updates = nextStocks.filter(
+        const updates = nextTargetStocks.filter(
           (stock, index) =>
-            stock.current_price !== stocks[index]?.current_price ||
-            stock.price_updated_at !== stocks[index]?.price_updated_at ||
-            stock.market !== stocks[index]?.market
+            stock.current_price !== targetStocks[index]?.current_price ||
+            stock.price_updated_at !== targetStocks[index]?.price_updated_at ||
+            stock.market !== targetStocks[index]?.market
         );
 
         for (const stock of updates) {
@@ -487,9 +532,11 @@ export default function StockLedgerApp() {
           setMessage(`現價已更新 ${updatedCount} 檔${failed}。`);
         }
       }
+      return updatedCount > 0;
     } catch (error) {
       console.error("Failed to refresh quotes", error);
       if (showResultMessage) setMessage("更新現價失敗，請稍後再試。");
+      return false;
     } finally {
       setQuoteRefreshing(false);
     }
@@ -847,16 +894,18 @@ export default function StockLedgerApp() {
     if (!portfolio) return setFormError("找不到帳本");
     const editingTrade = editingTradeId ? (trades.find((trade) => trade.id === editingTradeId) ?? null) : null;
 
-    const catalogStock = catalogBySymbol.get(parsed.data.symbol);
+    const tradeCatalog = await getCatalogForSymbols([parsed.data.symbol]);
+    const catalogStock = findStockBySymbol(tradeCatalog, parsed.data.symbol);
     const displayName = catalogStock?.name || parsed.data.name;
     const existingStock = stocks.find((item) => item.symbol === parsed.data.symbol);
+    const resolvedIndustry = resolveIndustryValue(parsed.data.industry, catalogStock?.industry ?? existingStock?.industry);
     const stock: Stock =
       existingStock
         ? {
             ...existingStock,
             name: displayName,
             market: catalogStock?.market || existingStock.market,
-            industry: parsed.data.industry || existingStock.industry,
+            industry: resolvedIndustry,
             updated_at: new Date().toISOString()
           }
         :
@@ -866,7 +915,7 @@ export default function StockLedgerApp() {
         symbol: parsed.data.symbol,
         name: displayName,
         market: catalogStock?.market || "TWSE",
-        industry: parsed.data.industry || null,
+        industry: resolvedIndustry,
         current_price: parsed.data.unitPrice,
         price_updated_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -957,7 +1006,9 @@ export default function StockLedgerApp() {
     setTradeDraft({ ...emptyTradeDraft, portfolioId: portfolio.id });
     setFormError("");
     await reloadCloudDataAfterWrite();
-    setMessage("儲存成功");
+    const quoteUpdated = await refreshQuotesForStocks([stock], false);
+    if (quoteUpdated) await reloadCloudDataAfterWrite();
+    setMessage(quoteUpdated ? "儲存成功，現價已更新。" : "儲存成功，但現價暫時未更新。");
     setSheetMode(null);
   }
 
@@ -1209,6 +1260,7 @@ export default function StockLedgerApp() {
       let nextStocks = [...stocks];
       let nextTrades = [...trades];
       const skipped: CsvImportSummary["skipped"] = [];
+      const importCatalog = await getCatalogForSymbols(parsedRows.map((row) => row.symbol));
 
       for (const row of parsedRows) {
         if (!row.portfolioName || !row.symbol || !row.name || !Number.isFinite(row.quantity) || !Number.isFinite(row.unitPrice) || row.quantity <= 0 || row.unitPrice <= 0) {
@@ -1223,7 +1275,8 @@ export default function StockLedgerApp() {
         const tradeType: TradeType = row.type.includes("賣") ? "sell" : "buy";
 
         let stock = nextStocks.find((item) => item.symbol === row.symbol);
-        const catalogMatch = catalogBySymbol.get(row.symbol);
+        const catalogMatch = findStockBySymbol(importCatalog, row.symbol);
+        const resolvedIndustry = resolveIndustryValue(row.industry, catalogMatch?.industry ?? stock?.industry);
         if (!stock) {
           stock = {
             id: uid(),
@@ -1231,17 +1284,17 @@ export default function StockLedgerApp() {
             symbol: row.symbol,
             name: row.name,
             market: catalogMatch?.market || "TWSE",
-            industry: row.industry || null,
+            industry: resolvedIndustry,
             current_price: row.unitPrice,
             price_updated_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           };
           nextStocks.push(stock);
-        } else if (row.industry && row.industry !== stock.industry) {
+        } else if (resolvedIndustry !== stock.industry) {
           stock = {
             ...stock,
-            industry: row.industry,
+            industry: resolvedIndustry,
             updated_at: new Date().toISOString()
           };
           nextStocks = nextStocks.map((item) => (item.id === stock!.id ? stock! : item));
@@ -1386,6 +1439,7 @@ export default function StockLedgerApp() {
       const affectedStockIds = new Set<string>();
       const deletedAdjustmentKeys = new Set<string>();
       const now = new Date().toISOString();
+      const holdingsCatalog = await getCatalogForSymbols(parsedRows.map((row) => row.symbol));
 
       for (const row of parsedRows) {
         if (!row.portfolioName || !row.symbol || !row.name || !Number.isFinite(row.quantity) || !Number.isFinite(row.holdingCost) || row.quantity < 0 || row.holdingCost < 0) {
@@ -1402,7 +1456,7 @@ export default function StockLedgerApp() {
           continue;
         }
 
-        const catalogMatch = catalogBySymbol.get(row.symbol);
+        const catalogMatch = findStockBySymbol(holdingsCatalog, row.symbol);
         let stock = nextStocks.find((item) => item.symbol === row.symbol);
         const nextPrice = Number.isFinite(row.currentPrice) && row.currentPrice > 0 ? row.currentPrice : stock?.current_price ?? 0;
         if (!stock) {
@@ -1902,6 +1956,11 @@ function resolveIndustryValue(primary: string | null | undefined, fallback?: str
   if (normalizedPrimary && normalizedPrimary !== "未分類") return normalizedPrimary;
   const normalizedFallback = fallback?.trim();
   return normalizedFallback || primary || null;
+}
+
+function hasResolvedIndustry(industry: string | null | undefined) {
+  const normalized = industry?.trim();
+  return Boolean(normalized && normalized !== "未分類");
 }
 
 function sheetTitle(mode: SheetMode) {

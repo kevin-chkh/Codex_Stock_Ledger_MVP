@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findStockByName, findStockBySymbol, fuzzySearchStocks, type StockCatalogItem } from "./stock-lookup";
+import { findStockByName, findStockBySymbol, fuzzySearchStocks, loadStockCatalog, type StockCatalogItem } from "./stock-lookup";
 
 const catalog: StockCatalogItem[] = [
   { symbol: "3711", name: "日月光投控", industry: "半導體業", market: "TWSE", isEtf: false },
@@ -24,5 +24,10 @@ describe("stock lookup", () => {
 
   it("returns an ETF fallback for unknown 00-prefixed symbols", () => {
     expect(findStockBySymbol(catalog, "00999")).toMatchObject({ symbol: "00999", industry: "ETF", market: "TWSE", isEtf: true });
+  });
+
+  it("keeps ADATA in fallback catalog with industry", async () => {
+    const result = await loadStockCatalog();
+    expect(findStockBySymbol(result.catalog, "3260")).toMatchObject({ symbol: "3260", name: "威剛", industry: "半導體業", market: "TPEx" });
   });
 });

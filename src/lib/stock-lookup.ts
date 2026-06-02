@@ -23,6 +23,7 @@ const FALLBACK_STOCKS: StockCatalogItem[] = [
   { symbol: "3711", name: "\u65e5\u6708\u5149\u6295\u63a7", industry: "\u534a\u5c0e\u9ad4\u696d", market: "TWSE", isEtf: false },
   { symbol: "3771", name: "\u6607\u967d\u534a\u5c0e\u9ad4", industry: "\u534a\u5c0e\u9ad4\u696d", market: "Emerging", isEtf: false },
   { symbol: "2308", name: "\u53f0\u9054\u96fb", industry: "\u96fb\u5b50\u96f6\u7d44\u4ef6\u696d", market: "TWSE", isEtf: false },
+  { symbol: "3260", name: "\u5a01\u525b", industry: "\u534a\u5c0e\u9ad4\u696d", market: "TPEx", isEtf: false },
   { symbol: "2884", name: "\u7389\u5c71\u91d1", industry: "\u91d1\u878d\u4fdd\u96aa\u696d", market: "TWSE", isEtf: false },
   { symbol: "2886", name: "\u5146\u8c50\u91d1", industry: "\u91d1\u878d\u4fdd\u96aa\u696d", market: "TWSE", isEtf: false }
 ];
@@ -118,12 +119,29 @@ function saveCatalogCache(catalog: StockCatalogItem[]) {
 function mergeCatalog(items: StockCatalogItem[]) {
   const map = new Map<string, StockCatalogItem>();
   for (const item of items) {
+    const existing = map.get(item.symbol);
     const isEtf = item.isEtf ?? (item.industry === "ETF" || /^00\d+/.test(item.symbol));
-    map.set(item.symbol, {
+    const normalizedItem = {
       ...item,
       industry: isEtf ? "ETF" : item.industry || "\u672a\u5206\u985e",
       market: item.market || "TWSE",
       isEtf
+    };
+
+    if (!existing) {
+      map.set(item.symbol, normalizedItem);
+      continue;
+    }
+
+    map.set(item.symbol, {
+      ...normalizedItem,
+      name: normalizedItem.name || existing.name,
+      industry:
+        existing.industry && existing.industry !== "\u672a\u5206\u985e"
+          ? existing.industry
+          : normalizedItem.industry,
+      market: existing.market || normalizedItem.market,
+      isEtf: existing.isEtf || normalizedItem.isEtf
     });
   }
   return [...map.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));

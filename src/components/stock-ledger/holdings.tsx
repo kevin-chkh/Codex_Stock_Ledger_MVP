@@ -319,10 +319,14 @@ function ExpandedHoldingCard({
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3">
+      <div className="mt-3 grid grid-cols-3 gap-3">
         <div className="rounded-lg bg-white px-4 py-4">
           <p className="text-[11px] text-ink/45">每股均價</p>
           <p className="mt-2 text-lg font-semibold">{decimal(position.average_cost, 1)}</p>
+        </div>
+        <div className="rounded-lg bg-white px-4 py-4">
+          <p className="text-[11px] text-ink/45">現價</p>
+          <p className="mt-2 text-lg font-semibold">{decimal(position.current_price, 2)}</p>
         </div>
         <div className="rounded-lg bg-white px-4 py-4">
           <p className="text-[11px] text-ink/45">報酬率</p>
