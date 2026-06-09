@@ -980,8 +980,8 @@ export default function StockLedgerApp() {
       settings
     });
 
-    if (parsed.data.type === "sell") {
-      const tradesForValidation = editingTradeId ? trades.filter((trade) => trade.id !== editingTradeId) : trades;
+    if (parsed.data.type === "sell" && !editingTrade) {
+      const tradesForValidation = trades;
       const validationPositions = buildPositions(
         tradesForValidation,
         existingStock ? stocks : [...stocks, stock],
@@ -1024,8 +1024,14 @@ export default function StockLedgerApp() {
             editingTrade.stock_id !== stock.id ||
             editingTrade.portfolio_id !== portfolio.id)
       );
-    if (shouldValidateOversold && hasOversoldPosition(nextTrades, { portfolioId: portfolio.id, stockId: stock.id })) {
-      return setFormError("此修改會造成某檔股票賣出股數超過持有股數，請先調整相關交易。");
+    if (shouldValidateOversold) {
+      const scopes = [{ portfolioId: portfolio.id, stockId: stock.id }];
+      if (editingTrade && (editingTrade.portfolio_id !== portfolio.id || editingTrade.stock_id !== stock.id)) {
+        scopes.push({ portfolioId: editingTrade.portfolio_id, stockId: editingTrade.stock_id });
+      }
+      if (scopes.some((scope) => hasOversoldPosition(nextTrades, scope))) {
+        return setFormError("此修改會造成某檔股票賣出股數超過持有股數，請先調整相關交易。");
+      }
     }
     const tagRows = parseTags(parsed.data.tags).map((name) => ({
       id: uid(),
