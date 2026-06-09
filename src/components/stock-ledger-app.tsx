@@ -730,11 +730,20 @@ export default function StockLedgerApp() {
     if (typeof window !== "undefined") window.localStorage.setItem(DEMO_BANNER_DISMISSED_KEY, "1");
   }
 
+  function clearInteractionMessages() {
+    setMessage("");
+    setFormError("");
+  }
+
+  function openSheet(mode: SheetMode) {
+    clearInteractionMessages();
+    setSheetMode(mode);
+  }
+
   function openNewPortfolio() {
     setEditingPortfolioId(null);
     setPortfolioDraft({ name: "", initialAmount: "", note: "" });
-    setFormError("");
-    setSheetMode("portfolio");
+    openSheet("portfolio");
   }
 
   function openRenamePortfolio(portfolio: Portfolio) {
@@ -744,8 +753,7 @@ export default function StockLedgerApp() {
       initialAmount: String(portfolio.initial_amount),
       note: portfolio.note ?? ""
     });
-    setFormError("");
-    setSheetMode("portfolio");
+    openSheet("portfolio");
   }
 
   function openCashForPortfolio(portfolioId?: string) {
@@ -755,8 +763,7 @@ export default function StockLedgerApp() {
       amount: "",
       note: ""
     });
-    setFormError("");
-    setSheetMode("cash");
+    openSheet("cash");
   }
 
   async function savePortfolio() {
@@ -919,7 +926,7 @@ export default function StockLedgerApp() {
   }
 
   async function saveTrade() {
-    setFormError("");
+    clearInteractionMessages();
     const derivedUnitPrice =
       tradeDraft.buyMode === "totalAmount"
         ? Number(tradeDraft.quantity || 0) > 0
@@ -1139,6 +1146,7 @@ export default function StockLedgerApp() {
   }
 
   function openEditTrade(trade: Trade) {
+    clearInteractionMessages();
     const stock = stocks.find((item) => item.id === trade.stock_id);
     const scopedOverride = portfolioStockOverrides.find((item) => item.portfolio_id === trade.portfolio_id && item.stock_id === trade.stock_id);
     const tagNames = getScopedTagNames(trade.stock_id, trade.portfolio_id);
@@ -1163,10 +1171,11 @@ export default function StockLedgerApp() {
   function openNewTrade(type: TradeType) {
     setEditingTradeId(null);
     setTradeDraft({ ...emptyTradeDraft, tradedAt: today(), portfolioId: defaultTradePortfolioId, type });
-    setSheetMode("trade");
+    openSheet("trade");
   }
 
   function openStockAdjustEditor(position: Position) {
+    clearInteractionMessages();
     const adjustment = positionAdjustments.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
     const override = portfolioStockOverrides.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
     setStockDraft({
@@ -1756,7 +1765,7 @@ export default function StockLedgerApp() {
           >
             <RefreshCw size={20} className={quoteRefreshing ? "animate-spin" : ""} />
           </button>
-          <button className="rounded-full p-2 text-ink/75" aria-label="開啟設定" title="設定" onClick={() => setSheetMode("settings")}>
+          <button className="rounded-full p-2 text-ink/75" aria-label="開啟設定" title="設定" onClick={() => openSheet("settings")}>
             <Settings size={20} />
           </button>
         </div>
@@ -1852,7 +1861,7 @@ export default function StockLedgerApp() {
         className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-coral text-white shadow-soft"
         aria-label="開啟新增選單"
         title="新增"
-        onClick={() => setSheetMode("actions")}
+        onClick={() => openSheet("actions")}
       >
         <Plus size={26} />
       </button>
@@ -1888,7 +1897,7 @@ export default function StockLedgerApp() {
                 stocks={stocks}
                 settings={settings}
                 stockCatalog={stockCatalog}
-                onCash={() => setSheetMode("cash")}
+                onCash={() => openCashForPortfolio(tradeDraft.portfolioId)}
                 onSubmit={requestSaveTrade}
                 submitLabel={editingTradeId ? "更新交易" : "儲存交易"}
               />
