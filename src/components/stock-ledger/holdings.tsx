@@ -20,6 +20,7 @@ export function Holdings({
   onImportCsv: (file: File) => void;
 }) {
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
+  const [includeClosed, setIncludeClosed] = useState(false);
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("all");
   const [industryFilter, setIndustryFilter] = useState("all");
@@ -38,18 +39,29 @@ export function Holdings({
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>();
-    openPositions.forEach((position) => position.tags.forEach((tag) => tags.add(tag)));
+    positions.forEach((position) => {
+      if (position.quantity > 0 || position.realized_profit !== 0) position.tags.forEach((tag) => tags.add(tag));
+    });
     return [...tags].sort((a, b) => a.localeCompare(b, "zh-Hant"));
-  }, [openPositions]);
+  }, [positions]);
 
   const availableIndustries = useMemo(
-    () => [...new Set(openPositions.map((position) => position.industry).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-Hant")),
-    [openPositions]
+    () =>
+      [
+        ...new Set(
+          positions
+            .filter((position) => position.quantity > 0 || position.realized_profit !== 0)
+            .map((position) => position.industry)
+            .filter(Boolean)
+        )
+      ].sort((a, b) => a.localeCompare(b, "zh-Hant")),
+    [positions]
   );
 
   const filteredPositions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    return [...openPositions]
+    return positions
+      .filter((position) => position.quantity > 0 || (includeClosed && position.quantity === 0 && position.realized_profit !== 0))
       .filter((position) => {
         const searchable = [position.symbol, position.name, position.industry, ...position.tags].join(" ").toLowerCase();
         if (normalizedQuery && !searchable.includes(normalizedQuery)) return false;
@@ -58,12 +70,14 @@ export function Holdings({
         return true;
       })
       .sort((a, b) => {
+        if (a.quantity === 0 && b.quantity > 0) return 1;
+        if (a.quantity > 0 && b.quantity === 0) return -1;
         if (sortBy === "returnRate") return b.unrealized_return_rate - a.unrealized_return_rate;
         if (sortBy === "profit") return b.unrealized_profit - a.unrealized_profit;
         if (sortBy === "symbol") return a.symbol.localeCompare(b.symbol);
         return b.market_value - a.market_value;
       });
-  }, [industryFilter, openPositions, query, sortBy, tagFilter]);
+  }, [includeClosed, industryFilter, positions, query, sortBy, tagFilter]);
 
   return (
     <div className="space-y-4">
@@ -155,6 +169,15 @@ export function Holdings({
             <option value="symbol">代號小到大</option>
           </select>
         </div>
+        <label className="mt-3 flex items-center justify-between rounded-md border border-ink/10 bg-paper/45 px-3 py-2 text-sm font-semibold">
+          <span>含已清倉</span>
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-mint"
+            checked={includeClosed}
+            onChange={(event) => setIncludeClosed(event.target.checked)}
+          />
+        </label>
       </section>
 
       <section className="rounded-lg border border-ink/10 bg-white px-4 py-3 shadow-soft">
@@ -178,7 +201,7 @@ export function Holdings({
 
       <ListSection
         title={`持股 ${filteredPositions.length} 檔`}
-        empty={openPositions.length ? "沒有符合條件的持股" : "尚無持股"}
+        empty={positions.length ? "沒有符合條件的持股" : "尚無持股"}
         action={
           <div className="inline-flex rounded-lg border border-ink/10 bg-paper p-1">
             <button
@@ -203,30 +226,40 @@ export function Holdings({
         {viewMode === "list" ? (
           <div className="overflow-hidden rounded-xl border border-ink/10 bg-white">
             {filteredPositions.map((position, index) => {
+              const isClosed = position.quantity === 0;
               const expanded = expandedPositionId === position.stock_id;
               return (
                 <article key={position.stock_id} className={index ? "border-t border-ink/8" : ""}>
                   <div className="px-3 py-3">
                     <div className="flex items-start justify-between gap-3">
-                      <button className="min-w-0 flex-1 text-left" onClick={() => setExpandedPositionId(expanded ? null : position.stock_id)}>
+                      <button className="min-w-0 flex-1 text-left" onClick={() => !isClosed && setExpandedPositionId(expanded ? null : position.stock_id)}>
                         <div className="flex items-center gap-2">
                           <p className="truncate font-semibold">
                             {position.symbol} {position.name}
                           </p>
-                          {expanded ? <ChevronUp size={16} className="shrink-0 text-ink/45" /> : <ChevronDown size={16} className="shrink-0 text-ink/45" />}
+                          {isClosed ? <span className="shrink-0 rounded-full bg-ink/10 px-2 py-0.5 text-[11px] font-semibold text-ink/60">已清倉</span> : expanded ? <ChevronUp size={16} className="shrink-0 text-ink/45" /> : <ChevronDown size={16} className="shrink-0 text-ink/45" />}
                         </div>
                         <p className="mt-1 truncate text-xs text-ink/50">
-                          {position.quantity} 股{position.industry ? ` · ${position.industry}` : ""}
+                          {isClosed ? position.industry || "已實現損益" : `${position.quantity} 股${position.industry ? ` · ${position.industry}` : ""}`}
                         </p>
                       </button>
                       <div className="shrink-0 text-right">
-                        <p className="text-sm font-semibold">{currency(position.market_value)}</p>
-                        <p className={"mt-1 text-xs " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
-                        <p className={"mt-0.5 text-xs font-semibold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
+                        {isClosed ? (
+                          <>
+                            <p className="text-[11px] text-ink/45">已實現損益</p>
+                            <p className={"mt-1 text-sm font-semibold " + profitClass(position.realized_profit)}>{currency(position.realized_profit)}</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm font-semibold">{currency(position.market_value)}</p>
+                            <p className={"mt-1 text-xs " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
+                            <p className={"mt-0.5 text-xs font-semibold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
+                          </>
+                        )}
                       </div>
                     </div>
 
-                    {expanded ? <ExpandedHoldingCard position={position} onAdjustCost={onAdjustCost} /> : null}
+                    {expanded && !isClosed ? <ExpandedHoldingCard position={position} onAdjustCost={onAdjustCost} /> : null}
                   </div>
                 </article>
               );
@@ -235,7 +268,11 @@ export function Holdings({
         ) : (
           <div className="space-y-3">
             {filteredPositions.map((position) => (
-              <ExpandedHoldingCard key={position.stock_id} position={position} onAdjustCost={onAdjustCost} />
+              position.quantity === 0 ? (
+                <ClosedHoldingCard key={position.stock_id} position={position} />
+              ) : (
+                <ExpandedHoldingCard key={position.stock_id} position={position} onAdjustCost={onAdjustCost} />
+              )
             ))}
           </div>
         )}
@@ -277,6 +314,37 @@ function triggerCsvDownload(csv: string, filename: string) {
 function csvCell(value: string | number) {
   const text = String(value);
   return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function ClosedHoldingCard({ position }: { position: Position }) {
+  return (
+    <article className="rounded-xl border border-ink/10 bg-white p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="truncate font-semibold">
+              {position.symbol} {position.name}
+            </p>
+            <span className="shrink-0 rounded-full bg-ink/10 px-2 py-0.5 text-[11px] font-semibold text-ink/60">已清倉</span>
+          </div>
+          <p className="mt-1 truncate text-xs text-ink/50">{position.industry || "已實現部位"}</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-[11px] text-ink/45">已實現損益</p>
+          <p className={"mt-1 text-lg font-bold " + profitClass(position.realized_profit)}>{currency(position.realized_profit)}</p>
+        </div>
+      </div>
+      {position.tags.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {position.tags.map((tag) => (
+            <span key={tag} className="rounded-full bg-gold/15 px-2 py-1 text-ink/70">
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
 }
 
 function ExpandedHoldingCard({

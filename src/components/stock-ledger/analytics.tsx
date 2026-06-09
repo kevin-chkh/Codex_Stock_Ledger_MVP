@@ -36,7 +36,7 @@ export function Analytics({
   const [tagFilter, setTagFilter] = useState("all");
   const [trendWindow, setTrendWindow] = useState<TrendWindow>("14d");
   const [profitMode, setProfitMode] = useState<ProfitMode>("unrealized");
-  const [analysisBasis, setAnalysisBasis] = useState<AnalysisBasis>("marketValue");
+  const [analysisBasis, setAnalysisBasis] = useState<AnalysisBasis>("holdingCost");
   const [concentrationVisibleCount, setConcentrationVisibleCount] = useState(5);
   const [profitVisibleCount, setProfitVisibleCount] = useState(5);
   const [contributionGroup, setContributionGroup] = useState<ContributionGroup>("stock");

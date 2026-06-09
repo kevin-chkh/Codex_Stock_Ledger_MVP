@@ -43,6 +43,7 @@ export function Dashboard({
         stockId: string;
         symbol: string;
         name: string;
+        quantity: number;
         realizedProfit: number;
         unrealizedProfit: number;
         unrealizedReturnRate: number;
@@ -54,10 +55,12 @@ export function Dashboard({
         stockId: position.stock_id,
         symbol: position.symbol,
         name: position.name,
+        quantity: 0,
         realizedProfit: 0,
         unrealizedProfit: 0,
         unrealizedReturnRate: 0
       };
+      current.quantity += position.quantity;
       current.realizedProfit += position.realized_profit;
       current.unrealizedProfit += position.unrealized_profit;
       grouped.set(position.stock_id, current);
@@ -167,7 +170,13 @@ export function Dashboard({
             <Row
               key={item.symbol}
               title={item.symbol + " " + item.name}
-              subtitle={detailMode === "realized" ? "已實現損益" : "未實現損益 · 報酬率 " + percent(item.unrealizedReturnRate)}
+              subtitle={
+                detailMode === "realized"
+                  ? item.quantity === 0
+                    ? "已實現損益 · 已清倉"
+                    : "已實現損益"
+                  : "未實現損益 · 報酬率 " + percent(item.unrealizedReturnRate)
+              }
               right={currency(detailMode === "realized" ? item.realizedProfit : item.unrealizedProfit)}
               rightClass={profitClass(detailMode === "realized" ? item.realizedProfit : item.unrealizedProfit)}
             />
