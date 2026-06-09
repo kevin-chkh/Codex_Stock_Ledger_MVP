@@ -1126,9 +1126,16 @@ export default function StockLedgerApp() {
     setConfirmState({ kind: "deleteTrade", trade });
   }
 
+  function getScopedTagNames(stockId: string, portfolioId: string) {
+    const scopedTags = stockTags.filter((tag) => tag.stock_id === stockId && tag.portfolio_id === portfolioId).map((tag) => tag.name);
+    if (scopedTags.length > 0) return scopedTags;
+    return stockTags.filter((tag) => tag.stock_id === stockId && tag.portfolio_id == null).map((tag) => tag.name);
+  }
+
   function openEditTrade(trade: Trade) {
     const stock = stocks.find((item) => item.id === trade.stock_id);
     const scopedOverride = portfolioStockOverrides.find((item) => item.portfolio_id === trade.portfolio_id && item.stock_id === trade.stock_id);
+    const tagNames = getScopedTagNames(trade.stock_id, trade.portfolio_id);
     setEditingTradeId(trade.id);
     setTradeDraft({
       portfolioId: trade.portfolio_id,
@@ -1142,10 +1149,7 @@ export default function StockLedgerApp() {
       totalAmount: String(trade.type === "buy" ? trade.net_amount : trade.gross_amount),
       totalAmountIncludesFees: false,
       industry: scopedOverride?.industry_override ?? stock?.industry ?? "",
-      tags: stockTags
-        .filter((tag) => tag.stock_id === trade.stock_id && (tag.portfolio_id === trade.portfolio_id || tag.portfolio_id == null))
-        .map((tag) => tag.name)
-        .join(", ")
+      tags: tagNames.join(", ")
     });
     setSheetMode("trade");
   }
