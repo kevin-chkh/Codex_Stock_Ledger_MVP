@@ -22,7 +22,7 @@ import { currency, parseTags, profitClass } from "@/lib/format";
 import { hasSupabaseEnv, supabase } from "@/lib/supabase";
 import { findStockBySymbol, loadStockCatalog, type StockCatalogItem } from "@/lib/stock-lookup";
 import { buildPortfolioUpdates, deleteTradeFromPortfolios, hasOversoldPosition, makeTrade, tradeCashImpact } from "@/lib/trade-ledger";
-import type { CashMovement, CashMovementType, Portfolio, Position, PositionAdjustment, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
+import type { CashMovement, CashMovementType, Portfolio, PortfolioStockOverride, Position, PositionAdjustment, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
 import { Dashboard } from "@/components/stock-ledger/dashboard";
 import { ConfirmSheet, ListSection, Row } from "@/components/stock-ledger/ui";
 import { Trades } from "@/components/stock-ledger/trades";
@@ -56,6 +56,7 @@ type LocalSnapshot = {
   cashMovements: CashMovement[];
   stocks: Stock[];
   stockTags: StockTag[];
+  portfolioStockOverrides: PortfolioStockOverride[];
   trades: Trade[];
   positionAdjustments: PositionAdjustment[];
   settings: UserSettings;
@@ -223,6 +224,7 @@ export default function StockLedgerApp() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [stockTags, setStockTags] = useState<StockTag[]>([]);
+  const [portfolioStockOverrides, setPortfolioStockOverrides] = useState<PortfolioStockOverride[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [positionAdjustments, setPositionAdjustments] = useState<PositionAdjustment[]>([]);
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
@@ -255,7 +257,10 @@ export default function StockLedgerApp() {
       }),
     [stocks, catalogBySymbol]
   );
-  const positions = useMemo(() => buildPositions(trades, effectiveStocks, stockTags, positionAdjustments), [trades, effectiveStocks, stockTags, positionAdjustments]);
+  const positions = useMemo(
+    () => buildPositions(trades, effectiveStocks, stockTags, positionAdjustments, portfolioStockOverrides),
+    [trades, effectiveStocks, stockTags, positionAdjustments, portfolioStockOverrides]
+  );
   const stockSignature = useMemo(() => stocks.map((stock) => stock.id).sort().join("|"), [stocks]);
   const latestQuoteAt = useMemo(() => {
     const timestamps = effectiveStocks.map((stock) => stock.price_updated_at).filter((value): value is string => Boolean(value));
@@ -307,11 +312,12 @@ export default function StockLedgerApp() {
       cashMovements,
       stocks,
       stockTags,
+      portfolioStockOverrides,
       trades,
       positionAdjustments,
       settings
     });
-  }, [cashMovements, loading, portfolios, positionAdjustments, settings, stockTags, stocks, trades, userId]);
+  }, [cashMovements, loading, portfolioStockOverrides, portfolios, positionAdjustments, settings, stockTags, stocks, trades, userId]);
 
   useEffect(() => {
     if (!userId || !stockSignature) return;
@@ -551,6 +557,7 @@ export default function StockLedgerApp() {
     setCashMovements(snapshot.cashMovements.map(normalizeCashMovement));
     setStocks(snapshot.stocks.map(normalizeStock));
     setStockTags(snapshot.stockTags);
+    setPortfolioStockOverrides((snapshot.portfolioStockOverrides ?? []).map(normalizePortfolioStockOverride));
     setTrades(snapshot.trades.map(normalizeTrade));
     setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
     setMessage("已載入本機儲存資料。");
@@ -621,28 +628,78 @@ export default function StockLedgerApp() {
 
   async function loadCloudData(uidValue: string) {
     if (!supabase) return;
-    const [portfolioResult, stockResult, tagResult, tradeResult, cashResult, settingsResult, adjustmentsResult] = await Promise.all([
+    const [portfolioResult, stockResult, tagResult, overrideResult, tradeResult, cashResult, settingsResult, adjustmentsResult] = await Promise.all([
       supabase.from("portfolios").select("*").order("created_at", { ascending: true }),
       supabase.from("stocks").select("*").order("symbol", { ascending: true }),
       supabase.from("stock_tags").select("*").order("name", { ascending: true }),
+      supabase.from("portfolio_stock_overrides").select("*").order("updated_at", { ascending: false }),
       supabase.from("trades").select("*, stock:stocks(*)").order("traded_at", { ascending: false }),
       supabase.from("cash_movements").select("*").order("occurred_at", { ascending: false }),
       supabase.from("settings").select("*").eq("user_id", uidValue).maybeSingle(),
       supabase.from("position_adjustments").select("*").order("updated_at", { ascending: false })
     ]);
 
-    setPortfolios((portfolioResult.data ?? []).map(normalizePortfolio));
-    setStocks((stockResult.data ?? []).map(normalizeStock));
-    setStockTags((tagResult.data ?? []) as StockTag[]);
-    setTrades((tradeResult.data ?? []).map(normalizeTrade));
-    setCashMovements((cashResult.data ?? []).map(normalizeCashMovement));
+    const warnings: string[] = [];
+
+    if (portfolioResult.error) {
+      console.error("Failed to load portfolios", portfolioResult.error);
+      warnings.push("帳本");
+    } else {
+      setPortfolios((portfolioResult.data ?? []).map(normalizePortfolio));
+    }
+
+    if (stockResult.error) {
+      console.error("Failed to load stocks", stockResult.error);
+      warnings.push("股票");
+    } else {
+      setStocks((stockResult.data ?? []).map(normalizeStock));
+    }
+
+    if (tagResult.error) {
+      console.error("Failed to load stock tags", tagResult.error);
+      warnings.push("標籤");
+    } else {
+      setStockTags((tagResult.data ?? []) as StockTag[]);
+    }
+
+    if (overrideResult.error) {
+      console.error("Failed to load portfolio stock overrides", overrideResult.error);
+      warnings.push("持股分類");
+    } else {
+      setPortfolioStockOverrides((overrideResult.data ?? []).map(normalizePortfolioStockOverride));
+    }
+
+    if (tradeResult.error) {
+      console.error("Failed to load trades", tradeResult.error);
+      warnings.push("交易");
+    } else {
+      setTrades((tradeResult.data ?? []).map(normalizeTrade));
+    }
+
+    if (cashResult.error) {
+      console.error("Failed to load cash movements", cashResult.error);
+      warnings.push("資金異動");
+    } else {
+      setCashMovements((cashResult.data ?? []).map(normalizeCashMovement));
+    }
+
     if (adjustmentsResult.error) {
       console.error("Failed to load position adjustments", adjustmentsResult.error);
-      setMessage("持股校正資料暫時載入失敗，已保留目前畫面資料。");
+      warnings.push("持股校正");
     } else {
       setPositionAdjustments((adjustmentsResult.data ?? []).map(normalizePositionAdjustment));
     }
-    setSettings(settingsResult.data ? normalizeSettings(settingsResult.data) : { ...DEFAULT_SETTINGS, user_id: uidValue });
+
+    if (settingsResult.error) {
+      console.error("Failed to load settings", settingsResult.error);
+      warnings.push("設定");
+    } else {
+      setSettings(settingsResult.data ? normalizeSettings(settingsResult.data) : { ...DEFAULT_SETTINGS, user_id: uidValue });
+    }
+
+    if (warnings.length) {
+      setMessage("部分雲端資料載入失敗，已保留目前畫面資料：" + warnings.join("、") + "。");
+    }
   }
 
   async function reloadCloudDataAfterWrite() {
@@ -774,27 +831,10 @@ export default function StockLedgerApp() {
 
   async function deletePortfolio(portfolio: Portfolio) {
     setFormError("");
-    const relatedTrades = trades.filter((item) => item.portfolio_id === portfolio.id);
-    const relatedCashMovements = cashMovements.filter((item) => item.portfolio_id === portfolio.id);
-    const relatedAdjustments = positionAdjustments.filter((item) => item.portfolio_id === portfolio.id);
 
     if (supabase && hasSupabaseEnv) {
-      if (relatedTrades.length) {
-        const { error } = await supabase.from("trades").delete().eq("portfolio_id", portfolio.id);
-        if (error) return setFormError(toUserError(error, "刪除帳本交易失敗。"));
-      }
-      if (relatedCashMovements.length) {
-        const { error } = await supabase.from("cash_movements").delete().eq("portfolio_id", portfolio.id);
-        if (error) return setFormError(toUserError(error, "刪除帳本資金異動失敗。"));
-      }
-      if (relatedAdjustments.length) {
-        const { error } = await supabase.from("position_adjustments").delete().eq("portfolio_id", portfolio.id);
-        if (error && !String(error.message).includes("position_adjustments")) {
-          return setFormError(toUserError(error, "刪除帳本成本校正失敗。"));
-        }
-      }
-      const { error } = await supabase.from("portfolios").delete().eq("id", portfolio.id);
-      if (error) return setFormError(toUserError(error, "刪除帳本失敗。"));
+      const { error } = await supabase.rpc("delete_portfolio_transaction", { p_portfolio_id: portfolio.id });
+      if (error) return setFormError(toUserError(error, "刪除帳本失敗，相關資料未完整同步刪除。請確認已執行最新版 supabase/schema.sql。"));
     }
 
     setTrades((current) => current.filter((item) => item.portfolio_id !== portfolio.id));
@@ -841,14 +881,25 @@ export default function StockLedgerApp() {
     };
 
     if (supabase && hasSupabaseEnv) {
-      const { error: updateError } = await supabase.from("portfolios").update(nextPortfolio).eq("id", portfolio.id);
-      if (updateError) return setFormError(toUserError(updateError, "更新帳本失敗。"));
-      const { error: insertError } = await supabase.from("cash_movements").insert(movement);
-      if (insertError) return setFormError(toUserError(insertError, "建立資金異動失敗。"));
+      const { data, error } = await supabase.rpc("save_cash_movement_transaction", {
+        p_portfolio_id: portfolio.id,
+        p_type: parsed.data.type,
+        p_amount: parsed.data.amount,
+        p_occurred_at: movement.occurred_at,
+        p_note: movement.note
+      });
+      if (error) return setFormError(toUserError(error, "儲存資金異動失敗，帳本與流水未同步完成。請確認已執行最新版 supabase/schema.sql。"));
+
+      const payload = data as { portfolio?: Record<string, unknown>; movement?: Record<string, unknown> } | null;
+      const syncedPortfolio = payload?.portfolio ? normalizePortfolio(payload.portfolio) : nextPortfolio;
+      const syncedMovement = payload?.movement ? normalizeCashMovement(payload.movement) : movement;
+      setPortfolios((current) => current.map((item) => (item.id === portfolio.id ? syncedPortfolio : item)));
+      setCashMovements((current) => [syncedMovement, ...current]);
+    } else {
+      setPortfolios((current) => current.map((item) => (item.id === portfolio.id ? nextPortfolio : item)));
+      setCashMovements((current) => [movement, ...current]);
     }
 
-    setPortfolios((current) => current.map((item) => (item.id === portfolio.id ? nextPortfolio : item)));
-    setCashMovements((current) => [movement, ...current]);
     setCashDraft({ portfolioId: portfolio.id, type: "deposit", amount: "", note: "" });
     await reloadCloudDataAfterWrite();
     setMessage("資金異動已儲存。");
@@ -898,14 +949,14 @@ export default function StockLedgerApp() {
     const catalogStock = findStockBySymbol(tradeCatalog, parsed.data.symbol);
     const displayName = catalogStock?.name || parsed.data.name;
     const existingStock = stocks.find((item) => item.symbol === parsed.data.symbol);
-    const resolvedIndustry = resolveIndustryValue(parsed.data.industry, catalogStock?.industry ?? existingStock?.industry);
+    const globalIndustry = resolveIndustryValue(existingStock?.industry, catalogStock?.industry);
     const stock: Stock =
       existingStock
         ? {
             ...existingStock,
             name: displayName,
             market: catalogStock?.market || existingStock.market,
-            industry: resolvedIndustry,
+            industry: globalIndustry,
             updated_at: new Date().toISOString()
           }
         :
@@ -915,7 +966,7 @@ export default function StockLedgerApp() {
         symbol: parsed.data.symbol,
         name: displayName,
         market: catalogStock?.market || "TWSE",
-        industry: resolvedIndustry,
+        industry: globalIndustry,
         current_price: parsed.data.unitPrice,
         price_updated_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
@@ -931,7 +982,13 @@ export default function StockLedgerApp() {
 
     if (parsed.data.type === "sell") {
       const tradesForValidation = editingTradeId ? trades.filter((trade) => trade.id !== editingTradeId) : trades;
-      const validationPositions = buildPositions(tradesForValidation, existingStock ? stocks : [...stocks, stock], stockTags, positionAdjustments);
+      const validationPositions = buildPositions(
+        tradesForValidation,
+        existingStock ? stocks : [...stocks, stock],
+        stockTags,
+        positionAdjustments,
+        portfolioStockOverrides
+      );
       const position = validationPositions.find((item) => item.stock_id === stock.id && item.portfolio_id === portfolio.id);
       if (!position || parsed.data.quantity > position.quantity) return setFormError("可賣股數不足，目前可賣 " + (position?.quantity ?? 0));
     }
@@ -973,6 +1030,7 @@ export default function StockLedgerApp() {
     const tagRows = parseTags(parsed.data.tags).map((name) => ({
       id: uid(),
       user_id: userId ?? "demo",
+      portfolio_id: portfolio.id,
       stock_id: stock.id,
       name
     }));
@@ -983,6 +1041,7 @@ export default function StockLedgerApp() {
         p_stock: stock,
         p_trade: trade,
         p_tag_names: tagRows.map((tag) => tag.name),
+        p_industry_override: parsed.data.industry?.trim() || null,
         p_portfolio_updates: portfolioUpdates.map((nextPortfolio) => ({
           id: nextPortfolio.id,
           cash_balance: nextPortfolio.cash_balance,
@@ -995,7 +1054,25 @@ export default function StockLedgerApp() {
     }
 
     setStocks((current) => (existingStock ? current.map((item) => (item.id === stock.id ? stock : item)) : [...current, stock]));
-    setStockTags((current) => [...current.filter((item) => item.stock_id !== stock.id), ...tagRows]);
+    setPortfolioStockOverrides((current) => {
+      const existingOverride = current.find((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id);
+      const filtered = current.filter((item) => !(item.portfolio_id === portfolio.id && item.stock_id === stock.id));
+      const industryOverride = parsed.data.industry?.trim();
+      if (!industryOverride) return filtered;
+      return [
+        ...filtered,
+        {
+          id: existingOverride?.id ?? uid(),
+          user_id: userId ?? "demo",
+          portfolio_id: portfolio.id,
+          stock_id: stock.id,
+          industry_override: industryOverride,
+          created_at: existingOverride?.created_at ?? new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }
+      ];
+    });
+    setStockTags((current) => [...current.filter((item) => !(item.portfolio_id === portfolio.id && item.stock_id === stock.id)), ...tagRows]);
     setTrades(nextTrades);
     setPortfolios((current) =>
       current.map((item) => portfolioUpdates.find((nextPortfolio) => nextPortfolio.id === item.id) ?? item)
@@ -1051,6 +1128,7 @@ export default function StockLedgerApp() {
 
   function openEditTrade(trade: Trade) {
     const stock = stocks.find((item) => item.id === trade.stock_id);
+    const scopedOverride = portfolioStockOverrides.find((item) => item.portfolio_id === trade.portfolio_id && item.stock_id === trade.stock_id);
     setEditingTradeId(trade.id);
     setTradeDraft({
       portfolioId: trade.portfolio_id,
@@ -1063,9 +1141,9 @@ export default function StockLedgerApp() {
       unitPrice: String(trade.unit_price),
       totalAmount: String(trade.type === "buy" ? trade.net_amount : trade.gross_amount),
       totalAmountIncludesFees: false,
-      industry: stock?.industry ?? "",
+      industry: scopedOverride?.industry_override ?? stock?.industry ?? "",
       tags: stockTags
-        .filter((tag) => tag.stock_id === trade.stock_id)
+        .filter((tag) => tag.stock_id === trade.stock_id && (tag.portfolio_id === trade.portfolio_id || tag.portfolio_id == null))
         .map((tag) => tag.name)
         .join(", ")
     });
@@ -1080,13 +1158,14 @@ export default function StockLedgerApp() {
 
   function openStockAdjustEditor(position: Position) {
     const adjustment = positionAdjustments.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
+    const override = portfolioStockOverrides.find((item) => item.portfolio_id === position.portfolio_id && item.stock_id === position.stock_id);
     setStockDraft({
       stockId: position.stock_id,
       portfolioId: position.portfolio_id,
       currentPrice: String(position.current_price),
       quantity: String(adjustment?.adjusted_quantity ?? position.quantity),
       holdingCost: String(adjustment?.adjusted_cost ?? position.holding_cost),
-      industry: position.industry === "未分類" ? "" : position.industry,
+      industry: override?.industry_override ?? (position.industry === "未分類" ? "" : position.industry),
       tags: position.tags.join(", ")
     });
     setStockAdjustBaseline({
@@ -1109,10 +1188,16 @@ export default function StockLedgerApp() {
     const stock = stocks.find((item) => item.id === parsed.stockId);
     if (!stock) return setFormError("找不到股票");
     if (parsed.quantity === 0 && parsed.holdingCost > 0) return setFormError("持有庫存為 0 時，持有成本也必須為 0。");
-    const nextStock: Stock = {
-      ...stock,
-      industry: parsed.industry?.trim() ? parsed.industry.trim() : null,
-      updated_at: new Date().toISOString()
+    const overrideUpdatedAt = new Date().toISOString();
+    const nextOverride: PortfolioStockOverride = {
+      id: portfolioStockOverrides.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.id ?? uid(),
+      user_id: userId ?? "demo",
+      portfolio_id: parsed.portfolioId,
+      stock_id: stock.id,
+      industry_override: parsed.industry?.trim() ? parsed.industry.trim() : null,
+      created_at:
+        portfolioStockOverrides.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.created_at ?? overrideUpdatedAt,
+      updated_at: overrideUpdatedAt
     };
     const nextAdjustment: PositionAdjustment = {
       id: positionAdjustments.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.id ?? uid(),
@@ -1122,43 +1207,38 @@ export default function StockLedgerApp() {
       adjusted_quantity: parsed.quantity,
       adjusted_cost: parsed.holdingCost,
       created_at: positionAdjustments.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      baseline_traded_at: today(),
+      baseline_created_at: new Date().toISOString()
     };
     const tagRows = parseTags(parsed.tags).map((name) => ({
       id: uid(),
       user_id: userId ?? "demo",
+      portfolio_id: parsed.portfolioId,
       stock_id: stock.id,
       name
     }));
 
     if (supabase && hasSupabaseEnv) {
-      const adjustmentQuery = supabase.from("position_adjustments");
-      if (parsed.quantity === 0 && parsed.holdingCost === 0) {
-        const { error: adjustmentError } = await adjustmentQuery.delete().eq("portfolio_id", parsed.portfolioId).eq("stock_id", stock.id);
-        if (adjustmentError) {
-          return setFormError(toUserError(adjustmentError, "更新持股調整失敗。"));
-        }
-      } else {
-        const { error: adjustmentError } = await adjustmentQuery.upsert(nextAdjustment, { onConflict: "user_id,portfolio_id,stock_id" });
-        if (adjustmentError) {
-          return setFormError(toUserError(adjustmentError, "更新持股調整失敗。請確認已執行最新版 supabase/schema.sql。"));
-        }
-      }
-      const { error: stockError } = await supabase.from("stocks").update({ industry: nextStock.industry, updated_at: nextStock.updated_at }).eq("id", stock.id);
-      if (stockError) return setFormError(toUserError(stockError, "更新股票產業別失敗。"));
-      await supabase.from("stock_tags").delete().eq("stock_id", stock.id);
-      if (tagRows.length) {
-        const { error: tagError } = await supabase.from("stock_tags").insert(tagRows);
-        if (tagError) return setFormError(toUserError(tagError, "更新股票標籤失敗。"));
-      }
+      const { error } = await supabase.rpc("save_position_adjustment_transaction", {
+        p_stock: stock,
+        p_adjustment: nextAdjustment,
+        p_tag_names: tagRows.map((tag) => tag.name),
+        p_industry_override: nextOverride.industry_override,
+        p_delete_adjustment: parsed.quantity === 0 && parsed.holdingCost === 0
+      });
+      if (error) return setFormError(toUserError(error, "更新持股調整失敗，成本、分類與標籤未完整同步。請確認已執行最新版 supabase/schema.sql。"));
     }
 
     setPositionAdjustments((current) => {
       const filtered = current.filter((item) => !(item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id));
       return parsed.quantity === 0 && parsed.holdingCost === 0 ? filtered : [...filtered, nextAdjustment];
     });
-    setStocks((current) => current.map((item) => (item.id === stock.id ? nextStock : item)));
-    setStockTags((current) => [...current.filter((item) => item.stock_id !== stock.id), ...tagRows]);
+    setPortfolioStockOverrides((current) => {
+      const filtered = current.filter((item) => !(item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id));
+      return nextOverride.industry_override ? [...filtered, nextOverride] : filtered;
+    });
+    setStockTags((current) => [...current.filter((item) => !(item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)), ...tagRows]);
     await reloadCloudDataAfterWrite();
     setMessage(supabase && hasSupabaseEnv ? "成本校正已更新。" : "成本校正已更新。");
     setConfirmState(null);
@@ -1183,6 +1263,7 @@ export default function StockLedgerApp() {
       cashMovements,
       stocks,
       stockTags,
+      portfolioStockOverrides,
       trades,
       positionAdjustments,
       settings
@@ -1257,6 +1338,7 @@ export default function StockLedgerApp() {
       let nextPortfolios = [...portfolios];
       let nextStocks = [...stocks];
       let nextTrades = [...trades];
+      let nextPortfolioStockOverrides = [...portfolioStockOverrides];
       const skipped: CsvImportSummary["skipped"] = [];
       const importCatalog = await getCatalogForSymbols(parsedRows.map((row) => row.symbol));
 
@@ -1274,7 +1356,8 @@ export default function StockLedgerApp() {
 
         let stock = nextStocks.find((item) => item.symbol === row.symbol);
         const catalogMatch = findStockBySymbol(importCatalog, row.symbol);
-        const resolvedIndustry = resolveIndustryValue(row.industry, catalogMatch?.industry ?? stock?.industry);
+        const globalIndustry = resolveIndustryValue(stock?.industry, catalogMatch?.industry);
+        const resolvedIndustry = resolveIndustryValue(row.industry, globalIndustry);
         if (!stock) {
           stock = {
             id: uid(),
@@ -1282,20 +1365,37 @@ export default function StockLedgerApp() {
             symbol: row.symbol,
             name: row.name,
             market: catalogMatch?.market || "TWSE",
-            industry: resolvedIndustry,
+            industry: globalIndustry ?? resolvedIndustry,
             current_price: row.unitPrice,
             price_updated_at: new Date().toISOString(),
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           };
           nextStocks.push(stock);
-        } else if (resolvedIndustry !== stock.industry) {
+        } else if (globalIndustry !== stock.industry) {
           stock = {
             ...stock,
-            industry: resolvedIndustry,
+            industry: globalIndustry,
             updated_at: new Date().toISOString()
           };
           nextStocks = nextStocks.map((item) => (item.id === stock!.id ? stock! : item));
+        }
+
+        if (resolvedIndustry) {
+          const nextOverride: PortfolioStockOverride = {
+            id: nextPortfolioStockOverrides.find((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id)?.id ?? uid(),
+            user_id: userId ?? "demo",
+            portfolio_id: portfolio.id,
+            stock_id: stock.id,
+            industry_override: resolvedIndustry,
+            created_at:
+              nextPortfolioStockOverrides.find((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id)?.created_at ?? new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          nextPortfolioStockOverrides = [
+            ...nextPortfolioStockOverrides.filter((item) => !(item.portfolio_id === portfolio.id && item.stock_id === stock!.id)),
+            nextOverride
+          ];
         }
 
         const createdAt = new Date().toISOString();
@@ -1334,7 +1434,11 @@ export default function StockLedgerApp() {
       if (supabase && hasSupabaseEnv) {
         const changedStocks = nextStocks.filter((stock) => {
           const old = stocks.find((item) => item.id === stock.id);
-          return !old || old.industry !== stock.industry;
+          return !old || old.name !== stock.name || old.market !== stock.market || old.industry !== stock.industry || old.current_price !== stock.current_price || old.price_updated_at !== stock.price_updated_at;
+        });
+        const changedOverrides = nextPortfolioStockOverrides.filter((override) => {
+          const old = portfolioStockOverrides.find((item) => item.id === override.id);
+          return !old || old.industry_override !== override.industry_override;
         });
         const importedTrades = nextTrades.filter((trade) => !trades.some((old) => old.id === trade.id));
         const changedPortfolios = nextPortfolios
@@ -1350,12 +1454,14 @@ export default function StockLedgerApp() {
         const { error: importError } = await supabase.rpc("import_trades_transaction", {
           p_stocks: changedStocks,
           p_trades: importedTrades,
+          p_portfolio_stock_overrides: changedOverrides,
           p_portfolio_updates: changedPortfolios
         });
         if (importError) return setFormError(toUserError(importError, "匯入交易失敗，資料庫未完成股票、交易與現金同步更新。請確認已執行最新版 supabase/schema.sql。"));
       }
 
       setStocks(nextStocks);
+      setPortfolioStockOverrides(nextPortfolioStockOverrides);
       setTrades(nextTrades);
       setPortfolios(nextPortfolios);
       const importedCount = nextTrades.length - trades.length;
@@ -1433,8 +1539,9 @@ export default function StockLedgerApp() {
       let nextStocks = [...stocks];
       let nextAdjustments = [...positionAdjustments];
       let nextTags = [...stockTags];
+      let nextPortfolioStockOverrides = [...portfolioStockOverrides];
       const skipped: CsvImportSummary["skipped"] = [];
-      const affectedStockIds = new Set<string>();
+      const affectedPairs = new Set<string>();
       const deletedAdjustmentKeys = new Set<string>();
       const now = new Date().toISOString();
       const holdingsCatalog = await getCatalogForSymbols(parsedRows.map((row) => row.symbol));
@@ -1457,6 +1564,7 @@ export default function StockLedgerApp() {
         const catalogMatch = findStockBySymbol(holdingsCatalog, row.symbol);
         let stock = nextStocks.find((item) => item.symbol === row.symbol);
         const nextPrice = Number.isFinite(row.currentPrice) && row.currentPrice > 0 ? row.currentPrice : stock?.current_price ?? 0;
+        const globalIndustry = resolveIndustryValue(stock?.industry, catalogMatch?.industry);
         if (!stock) {
           stock = {
             id: uid(),
@@ -1464,7 +1572,7 @@ export default function StockLedgerApp() {
             symbol: row.symbol,
             name: row.name,
             market: catalogMatch?.market || "TWSE",
-            industry: row.industry || catalogMatch?.industry || null,
+            industry: globalIndustry ?? row.industry ?? null,
             current_price: nextPrice,
             price_updated_at: nextPrice > 0 ? now : null,
             created_at: now,
@@ -1476,7 +1584,7 @@ export default function StockLedgerApp() {
             ...stock,
             name: row.name || stock.name,
             market: stock.market || catalogMatch?.market || "TWSE",
-            industry: row.industry || stock.industry || catalogMatch?.industry || null,
+            industry: globalIndustry ?? stock.industry,
             current_price: nextPrice,
             price_updated_at: nextPrice > 0 ? now : stock.price_updated_at,
             updated_at: now
@@ -1493,7 +1601,9 @@ export default function StockLedgerApp() {
           adjusted_quantity: row.quantity,
           adjusted_cost: row.holdingCost,
           created_at: oldAdjustment?.created_at ?? now,
-          updated_at: now
+          updated_at: now,
+          baseline_traded_at: today(),
+          baseline_created_at: now
         };
         nextAdjustments = nextAdjustments.filter((item) => !(item.portfolio_id === portfolio.id && item.stock_id === stock!.id));
         if (row.quantity === 0 && row.holdingCost === 0) {
@@ -1502,42 +1612,65 @@ export default function StockLedgerApp() {
           nextAdjustments.push(nextAdjustment);
         }
 
+        const nextOverride: PortfolioStockOverride = {
+          id: nextPortfolioStockOverrides.find((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id)?.id ?? uid(),
+          user_id: userId ?? "demo",
+          portfolio_id: portfolio.id,
+          stock_id: stock.id,
+          industry_override: row.industry || null,
+          created_at: nextPortfolioStockOverrides.find((item) => item.portfolio_id === portfolio.id && item.stock_id === stock.id)?.created_at ?? now,
+          updated_at: now
+        };
+        nextPortfolioStockOverrides = nextPortfolioStockOverrides.filter((item) => !(item.portfolio_id === portfolio.id && item.stock_id === stock!.id));
+        if (nextOverride.industry_override) nextPortfolioStockOverrides.push(nextOverride);
+
         const tagRows = parseTags(row.tags).map((name) => ({
           id: uid(),
           user_id: userId ?? "demo",
+          portfolio_id: portfolio.id,
           stock_id: stock!.id,
           name
         }));
-        nextTags = [...nextTags.filter((item) => item.stock_id !== stock!.id), ...tagRows];
-        affectedStockIds.add(stock.id);
+        nextTags = [...nextTags.filter((item) => !(item.portfolio_id === portfolio.id && item.stock_id === stock!.id)), ...tagRows];
+        affectedPairs.add(`${portfolio.id}:${stock.id}`);
       }
 
       if (supabase && hasSupabaseEnv) {
         const newStocks = nextStocks.filter((stock) => !stocks.some((old) => old.id === stock.id));
-        const updatedStocks = nextStocks.filter((stock) => {
-          const old = stocks.find((item) => item.id === stock.id);
-          return old && affectedStockIds.has(stock.id);
-        });
         const deletedAdjustments = [...deletedAdjustmentKeys].map((key) => {
           const [portfolioId, stockId] = key.split(":");
           return { portfolio_id: portfolioId, stock_id: stockId };
         });
-        const affectedTags = nextTags.filter((tag) => affectedStockIds.has(tag.stock_id));
+        const pairMatches = (portfolioId: string | null | undefined, stockId: string) => Boolean(portfolioId) && affectedPairs.has(`${portfolioId}:${stockId}`);
+        const affectedTags = nextTags.filter((tag) => pairMatches(tag.portfolio_id, tag.stock_id));
+        const affectedOverrides = nextPortfolioStockOverrides.filter((override) => pairMatches(override.portfolio_id, override.stock_id));
+        const affectedStockIds = [...new Set([...affectedPairs].map((pair) => pair.split(":")[1]))];
+        const affectedStockIdSet = new Set(affectedStockIds);
+        const affectedPairRows = [...affectedPairs].map((pair) => {
+          const [portfolio_id, stock_id] = pair.split(":");
+          return { portfolio_id, stock_id };
+        });
+        const changedExistingStocks = nextStocks.filter((stock) => {
+          const old = stocks.find((item) => item.id === stock.id);
+          return old && affectedStockIdSet.has(stock.id) && (old.name !== stock.name || old.market !== stock.market || old.industry !== stock.industry || old.current_price !== stock.current_price || old.price_updated_at !== stock.price_updated_at);
+        });
         const { error: importError } = await supabase.rpc("import_holdings_transaction", {
-          p_stocks: [...newStocks, ...updatedStocks],
-          p_adjustments: nextAdjustments.filter((item) => affectedStockIds.has(item.stock_id)),
+          p_stocks: [...newStocks, ...changedExistingStocks],
+          p_adjustments: nextAdjustments.filter((item) => affectedStockIdSet.has(item.stock_id)),
           p_deleted_adjustments: deletedAdjustments,
+          p_portfolio_stock_overrides: affectedOverrides,
           p_tags: affectedTags,
-          p_affected_stock_ids: [...affectedStockIds]
+          p_affected_pairs: affectedPairRows
         });
         if (importError) return setFormError(toUserError(importError, "匯入持股失敗，資料庫未完成股票、成本校正與標籤同步更新。請確認已執行最新版 supabase/schema.sql。"));
       }
 
       setStocks(nextStocks);
       setPositionAdjustments(nextAdjustments);
+      setPortfolioStockOverrides(nextPortfolioStockOverrides);
       setStockTags(nextTags);
       await reloadCloudDataAfterWrite();
-      setMessage("持股匯入成功：更新 " + affectedStockIds.size + " 檔、略過 " + skipped.length + " 筆。");
+      setMessage("持股匯入成功：更新 " + affectedPairs.size + " 筆持股、略過 " + skipped.length + " 筆。");
     } catch (error) {
       console.error("Failed to import holdings CSV", error);
       setFormError("持股 CSV 解析失敗，請確認格式與欄位。");
@@ -1876,6 +2009,7 @@ export default function StockLedgerApp() {
             setCashMovements(snapshot.cashMovements.map(normalizeCashMovement));
             setStocks(snapshot.stocks.map(normalizeStock));
             setStockTags(snapshot.stockTags);
+            setPortfolioStockOverrides(snapshot.portfolioStockOverrides ?? []);
             setTrades(snapshot.trades.map(normalizeTrade));
             setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
             setSelectedPortfolioId(snapshot.portfolios[0]?.id ?? "");
@@ -1934,7 +2068,16 @@ function normalizePositionAdjustment(row: Record<string, unknown>): PositionAdju
   return {
     ...(row as PositionAdjustment),
     adjusted_quantity: numberValue(row.adjusted_quantity),
-    adjusted_cost: numberValue(row.adjusted_cost)
+    adjusted_cost: numberValue(row.adjusted_cost),
+    baseline_traded_at: typeof row.baseline_traded_at === "string" ? row.baseline_traded_at : null,
+    baseline_created_at: typeof row.baseline_created_at === "string" ? row.baseline_created_at : null
+  };
+}
+
+function normalizePortfolioStockOverride(row: Record<string, unknown>): PortfolioStockOverride {
+  return {
+    ...(row as PortfolioStockOverride),
+    industry_override: typeof row.industry_override === "string" ? row.industry_override : null
   };
 }
 
@@ -2016,6 +2159,9 @@ function normalizeLocalSnapshot(parsed: Partial<LocalSnapshot>): LocalSnapshot |
     cashMovements: parsed.cashMovements ?? [],
     stocks: parsed.stocks ?? [],
     stockTags: parsed.stockTags ?? [],
+    portfolioStockOverrides: Array.isArray(parsed.portfolioStockOverrides)
+      ? parsed.portfolioStockOverrides.map((row) => normalizePortfolioStockOverride(row as Record<string, unknown>))
+      : [],
     trades: parsed.trades ?? [],
     positionAdjustments: Array.isArray(parsed.positionAdjustments) ? parsed.positionAdjustments.map((row) => normalizePositionAdjustment(row as Record<string, unknown>)) : [],
     settings: parsed.settings ? normalizeSettings(parsed.settings as unknown as Record<string, unknown>) : DEFAULT_SETTINGS

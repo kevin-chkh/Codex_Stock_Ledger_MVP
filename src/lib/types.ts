@@ -42,8 +42,19 @@ export type Stock = {
 export type StockTag = {
   id: string;
   user_id: string;
+  portfolio_id?: string | null;
   stock_id: string;
   name: string;
+};
+
+export type PortfolioStockOverride = {
+  id: string;
+  user_id: string;
+  portfolio_id: string;
+  stock_id: string;
+  industry_override: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type PositionAdjustment = {
@@ -53,6 +64,8 @@ export type PositionAdjustment = {
   stock_id: string;
   adjusted_quantity: number;
   adjusted_cost: number;
+  baseline_traded_at?: string | null;
+  baseline_created_at?: string | null;
   created_at: string;
   updated_at: string;
 };

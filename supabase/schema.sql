@@ -48,9 +48,21 @@ create table if not exists public.stocks (
 create table if not exists public.stock_tags (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
+  portfolio_id uuid references public.portfolios(id) on delete cascade,
   stock_id uuid not null references public.stocks(id) on delete cascade,
   name text not null,
-  unique (user_id, stock_id, name)
+  unique (user_id, portfolio_id, stock_id, name)
+);
+
+create table if not exists public.portfolio_stock_overrides (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  portfolio_id uuid not null references public.portfolios(id) on delete cascade,
+  stock_id uuid not null references public.stocks(id) on delete cascade,
+  industry_override text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, portfolio_id, stock_id)
 );
 
 create table if not exists public.trades (
@@ -77,6 +89,8 @@ create table if not exists public.position_adjustments (
   stock_id uuid not null references public.stocks(id) on delete cascade,
   adjusted_quantity numeric(18, 4) not null default 0 check (adjusted_quantity >= 0),
   adjusted_cost numeric(18, 2) not null default 0 check (adjusted_cost >= 0),
+  baseline_traded_at date,
+  baseline_created_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (user_id, portfolio_id, stock_id)
@@ -95,6 +109,7 @@ alter table public.portfolios enable row level security;
 alter table public.cash_movements enable row level security;
 alter table public.stocks enable row level security;
 alter table public.stock_tags enable row level security;
+alter table public.portfolio_stock_overrides enable row level security;
 alter table public.trades enable row level security;
 alter table public.position_adjustments enable row level security;
 alter table public.settings enable row level security;
@@ -106,8 +121,56 @@ update public.settings
 set fee_rate = 0.0012825
 where fee_rate = 0.001425;
 
+alter table public.position_adjustments
+add column if not exists baseline_traded_at date;
+
+alter table public.position_adjustments
+add column if not exists baseline_created_at timestamptz;
+
+alter table public.stock_tags
+add column if not exists portfolio_id uuid;
+
 do $$
 begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'stock_tags_portfolio_id_fkey'
+  ) then
+    alter table public.stock_tags
+    add constraint stock_tags_portfolio_id_fkey
+    foreign key (portfolio_id) references public.portfolios(id) on delete cascade;
+  end if;
+end $$;
+
+update public.position_adjustments
+set
+  baseline_traded_at = coalesce(baseline_traded_at, created_at::date, current_date),
+  baseline_created_at = coalesce(baseline_created_at, updated_at, created_at, now())
+where baseline_traded_at is null
+   or baseline_created_at is null;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'stock_tags_user_id_stock_id_name_key'
+  ) then
+    alter table public.stock_tags
+    drop constraint stock_tags_user_id_stock_id_name_key;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'stock_tags_user_id_portfolio_id_stock_id_name_key'
+  ) then
+    alter table public.stock_tags
+    add constraint stock_tags_user_id_portfolio_id_stock_id_name_key
+    unique (user_id, portfolio_id, stock_id, name);
+  end if;
+
   if not exists (
     select 1
     from pg_constraint
@@ -158,6 +221,14 @@ begin
     where schemaname = 'public' and tablename = 'stock_tags' and policyname = 'stock tags own rows'
   ) then
     create policy "stock tags own rows" on public.stock_tags
+      for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'portfolio_stock_overrides' and policyname = 'portfolio stock overrides own rows'
+  ) then
+    create policy "portfolio stock overrides own rows" on public.portfolio_stock_overrides
       for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
   end if;
 
@@ -265,6 +336,7 @@ create or replace function public.save_trade_transaction(
   p_stock jsonb,
   p_trade jsonb,
   p_tag_names text[],
+  p_industry_override text,
   p_portfolio_updates jsonb
 )
 returns void
@@ -397,15 +469,40 @@ begin
 
   delete from public.stock_tags
   where stock_id = target_stock_id
+    and portfolio_id = target_portfolio_id
     and user_id = auth.uid();
 
   foreach tag_name in array coalesce(p_tag_names, array[]::text[]) loop
     if nullif(trim(tag_name), '') is not null then
-      insert into public.stock_tags (user_id, stock_id, name)
-      values (auth.uid(), target_stock_id, trim(tag_name))
-      on conflict (user_id, stock_id, name) do nothing;
+      insert into public.stock_tags (user_id, portfolio_id, stock_id, name)
+      values (auth.uid(), target_portfolio_id, target_stock_id, trim(tag_name))
+      on conflict (user_id, portfolio_id, stock_id, name) do nothing;
     end if;
   end loop;
+
+  if nullif(trim(coalesce(p_industry_override, '')), '') is null then
+    delete from public.portfolio_stock_overrides
+    where user_id = auth.uid()
+      and portfolio_id = target_portfolio_id
+      and stock_id = target_stock_id;
+  else
+    insert into public.portfolio_stock_overrides (
+      user_id,
+      portfolio_id,
+      stock_id,
+      industry_override
+    )
+    values (
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      trim(p_industry_override)
+    )
+    on conflict (user_id, portfolio_id, stock_id)
+    do update set
+      industry_override = excluded.industry_override,
+      updated_at = now();
+  end if;
 
   for portfolio_update in select * from jsonb_array_elements(coalesce(p_portfolio_updates, '[]'::jsonb)) loop
     perform 1
@@ -429,9 +526,269 @@ begin
 end;
 $$;
 
+create or replace function public.save_cash_movement_transaction(
+  p_portfolio_id uuid,
+  p_type text,
+  p_amount numeric,
+  p_occurred_at date,
+  p_note text
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  target_portfolio public.portfolios%rowtype;
+  next_cash_balance numeric(18, 2);
+  next_total_deposits numeric(18, 2);
+  next_total_withdrawals numeric(18, 2);
+  inserted_movement public.cash_movements%rowtype;
+begin
+  if p_type not in ('deposit', 'withdraw', 'adjust') then
+    raise exception 'invalid_cash_movement_type'
+      using errcode = '22023';
+  end if;
+
+  if p_amount <= 0 then
+    raise exception 'invalid_cash_movement_amount'
+      using errcode = '22023';
+  end if;
+
+  select *
+  into target_portfolio
+  from public.portfolios
+  where id = p_portfolio_id
+    and user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'portfolio_not_found'
+      using errcode = 'P0002';
+  end if;
+
+  next_cash_balance := case
+    when p_type = 'deposit' then target_portfolio.cash_balance + p_amount
+    when p_type = 'withdraw' then target_portfolio.cash_balance - p_amount
+    else p_amount
+  end;
+
+  if p_type = 'withdraw' and next_cash_balance < 0 then
+    raise exception 'insufficient_cash_balance'
+      using errcode = '22003';
+  end if;
+
+  next_total_deposits := case
+    when p_type = 'deposit' then target_portfolio.total_deposits + p_amount
+    else target_portfolio.total_deposits
+  end;
+
+  next_total_withdrawals := case
+    when p_type = 'withdraw' then target_portfolio.total_withdrawals + p_amount
+    else target_portfolio.total_withdrawals
+  end;
+
+  update public.portfolios
+  set
+    cash_balance = next_cash_balance,
+    total_deposits = next_total_deposits,
+    total_withdrawals = next_total_withdrawals,
+    updated_at = now()
+  where id = target_portfolio.id
+    and user_id = auth.uid();
+
+  insert into public.cash_movements (
+    id,
+    user_id,
+    portfolio_id,
+    type,
+    amount,
+    balance_after,
+    occurred_at,
+    note
+  )
+  values (
+    gen_random_uuid(),
+    auth.uid(),
+    target_portfolio.id,
+    p_type,
+    p_amount,
+    next_cash_balance,
+    coalesce(p_occurred_at, current_date),
+    nullif(trim(coalesce(p_note, '')), '')
+  )
+  returning *
+  into inserted_movement;
+
+  return jsonb_build_object(
+    'portfolio', to_jsonb((
+      select p
+      from public.portfolios p
+      where p.id = target_portfolio.id
+    )),
+    'movement', to_jsonb(inserted_movement)
+  );
+end;
+$$;
+
+create or replace function public.delete_portfolio_transaction(p_portfolio_id uuid)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  perform 1
+  from public.portfolios
+  where id = p_portfolio_id
+    and user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'portfolio_not_found'
+      using errcode = 'P0002';
+  end if;
+
+  delete from public.portfolios
+  where id = p_portfolio_id
+    and user_id = auth.uid();
+end;
+$$;
+
+create or replace function public.save_position_adjustment_transaction(
+  p_stock jsonb,
+  p_adjustment jsonb,
+  p_tag_names text[],
+  p_industry_override text,
+  p_delete_adjustment boolean default false
+)
+returns void
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  target_stock_id uuid := (p_stock ->> 'id')::uuid;
+  target_portfolio_id uuid := (p_adjustment ->> 'portfolio_id')::uuid;
+  target_adjustment_id uuid := (p_adjustment ->> 'id')::uuid;
+  tag_name text;
+begin
+  if (p_stock ->> 'user_id')::uuid <> auth.uid()
+    or (p_adjustment ->> 'user_id')::uuid <> auth.uid() then
+    raise exception 'permission_denied'
+      using errcode = '42501';
+  end if;
+
+  perform 1
+  from public.portfolios
+  where id = target_portfolio_id
+    and user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'portfolio_not_found'
+      using errcode = 'P0002';
+  end if;
+
+  perform 1
+  from public.stocks
+  where id = target_stock_id
+    and user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'stock_not_found'
+      using errcode = 'P0002';
+  end if;
+
+  update public.stocks
+  set
+    updated_at = coalesce(nullif(p_stock ->> 'updated_at', '')::timestamptz, now())
+  where id = target_stock_id
+    and user_id = auth.uid();
+
+  if p_delete_adjustment then
+    delete from public.position_adjustments
+    where user_id = auth.uid()
+      and portfolio_id = target_portfolio_id
+      and stock_id = target_stock_id;
+  else
+    insert into public.position_adjustments (
+      id,
+      user_id,
+      portfolio_id,
+      stock_id,
+      adjusted_quantity,
+      adjusted_cost,
+      baseline_traded_at,
+      baseline_created_at,
+      created_at,
+      updated_at
+    )
+    values (
+      target_adjustment_id,
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      (p_adjustment ->> 'adjusted_quantity')::numeric,
+      (p_adjustment ->> 'adjusted_cost')::numeric,
+      coalesce(nullif(p_adjustment ->> 'baseline_traded_at', '')::date, current_date),
+      coalesce(nullif(p_adjustment ->> 'baseline_created_at', '')::timestamptz, now()),
+      coalesce(nullif(p_adjustment ->> 'created_at', '')::timestamptz, now()),
+      coalesce(nullif(p_adjustment ->> 'updated_at', '')::timestamptz, now())
+    )
+    on conflict (user_id, portfolio_id, stock_id)
+    do update set
+      adjusted_quantity = excluded.adjusted_quantity,
+      adjusted_cost = excluded.adjusted_cost,
+      baseline_traded_at = excluded.baseline_traded_at,
+      baseline_created_at = excluded.baseline_created_at,
+      updated_at = excluded.updated_at;
+  end if;
+
+  if nullif(trim(coalesce(p_industry_override, '')), '') is null then
+    delete from public.portfolio_stock_overrides
+    where user_id = auth.uid()
+      and portfolio_id = target_portfolio_id
+      and stock_id = target_stock_id;
+  else
+    insert into public.portfolio_stock_overrides (
+      user_id,
+      portfolio_id,
+      stock_id,
+      industry_override
+    )
+    values (
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      trim(p_industry_override)
+    )
+    on conflict (user_id, portfolio_id, stock_id)
+    do update set
+      industry_override = excluded.industry_override,
+      updated_at = now();
+  end if;
+
+  delete from public.stock_tags
+  where user_id = auth.uid()
+    and portfolio_id = target_portfolio_id
+    and stock_id = target_stock_id;
+
+  foreach tag_name in array coalesce(p_tag_names, array[]::text[]) loop
+    if nullif(trim(tag_name), '') is not null then
+      insert into public.stock_tags (user_id, portfolio_id, stock_id, name)
+      values (auth.uid(), target_portfolio_id, target_stock_id, trim(tag_name))
+      on conflict (user_id, portfolio_id, stock_id, name) do nothing;
+    end if;
+  end loop;
+end;
+$$;
+
 create or replace function public.import_trades_transaction(
   p_stocks jsonb,
   p_trades jsonb,
+  p_portfolio_stock_overrides jsonb,
   p_portfolio_updates jsonb
 )
 returns void
@@ -442,6 +799,7 @@ as $$
 declare
   stock_item jsonb;
   trade_item jsonb;
+  override_item jsonb;
   portfolio_update jsonb;
   target_stock_id uuid;
   target_trade_id uuid;
@@ -497,6 +855,59 @@ begin
         coalesce(nullif(stock_item ->> 'updated_at', '')::timestamptz, now())
       );
     end if;
+  end loop;
+
+  for override_item in select * from jsonb_array_elements(coalesce(p_portfolio_stock_overrides, '[]'::jsonb)) loop
+    target_stock_id := (override_item ->> 'stock_id')::uuid;
+    target_portfolio_id := (override_item ->> 'portfolio_id')::uuid;
+
+    if (override_item ->> 'user_id')::uuid <> auth.uid() then
+      raise exception 'permission_denied'
+        using errcode = '42501';
+    end if;
+
+    perform 1
+    from public.portfolios
+    where id = target_portfolio_id
+      and user_id = auth.uid();
+
+    if not found then
+      raise exception 'portfolio_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    perform 1
+    from public.stocks
+    where id = target_stock_id
+      and user_id = auth.uid();
+
+    if not found then
+      raise exception 'stock_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    insert into public.portfolio_stock_overrides (
+      id,
+      user_id,
+      portfolio_id,
+      stock_id,
+      industry_override,
+      created_at,
+      updated_at
+    )
+    values (
+      (override_item ->> 'id')::uuid,
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      nullif(trim(coalesce(override_item ->> 'industry_override', '')), ''),
+      coalesce(nullif(override_item ->> 'created_at', '')::timestamptz, now()),
+      coalesce(nullif(override_item ->> 'updated_at', '')::timestamptz, now())
+    )
+    on conflict (user_id, portfolio_id, stock_id)
+    do update set
+      industry_override = excluded.industry_override,
+      updated_at = excluded.updated_at;
   end loop;
 
   for trade_item in select * from jsonb_array_elements(coalesce(p_trades, '[]'::jsonb)) loop
@@ -590,8 +1001,9 @@ create or replace function public.import_holdings_transaction(
   p_stocks jsonb,
   p_adjustments jsonb,
   p_deleted_adjustments jsonb,
+  p_portfolio_stock_overrides jsonb,
   p_tags jsonb,
-  p_affected_stock_ids uuid[]
+  p_affected_pairs jsonb
 )
 returns void
 language plpgsql
@@ -602,10 +1014,11 @@ declare
   stock_item jsonb;
   adjustment_item jsonb;
   deleted_item jsonb;
+  override_item jsonb;
   tag_item jsonb;
+  affected_pair jsonb;
   target_stock_id uuid;
   target_portfolio_id uuid;
-  affected_stock_id uuid;
 begin
   for stock_item in select * from jsonb_array_elements(coalesce(p_stocks, '[]'::jsonb)) loop
     target_stock_id := (stock_item ->> 'id')::uuid;
@@ -695,6 +1108,8 @@ begin
       stock_id,
       adjusted_quantity,
       adjusted_cost,
+      baseline_traded_at,
+      baseline_created_at,
       created_at,
       updated_at
     )
@@ -705,6 +1120,8 @@ begin
       target_stock_id,
       (adjustment_item ->> 'adjusted_quantity')::numeric,
       (adjustment_item ->> 'adjusted_cost')::numeric,
+      coalesce(nullif(adjustment_item ->> 'baseline_traded_at', '')::date, current_date),
+      coalesce(nullif(adjustment_item ->> 'baseline_created_at', '')::timestamptz, now()),
       coalesce(nullif(adjustment_item ->> 'created_at', '')::timestamptz, now()),
       coalesce(nullif(adjustment_item ->> 'updated_at', '')::timestamptz, now())
     )
@@ -712,6 +1129,8 @@ begin
     do update set
       adjusted_quantity = excluded.adjusted_quantity,
       adjusted_cost = excluded.adjusted_cost,
+      baseline_traded_at = excluded.baseline_traded_at,
+      baseline_created_at = excluded.baseline_created_at,
       updated_at = excluded.updated_at;
   end loop;
 
@@ -722,28 +1141,95 @@ begin
       and stock_id = (deleted_item ->> 'stock_id')::uuid;
   end loop;
 
-  foreach affected_stock_id in array coalesce(p_affected_stock_ids, array[]::uuid[]) loop
+  for override_item in select * from jsonb_array_elements(coalesce(p_portfolio_stock_overrides, '[]'::jsonb)) loop
+    target_stock_id := (override_item ->> 'stock_id')::uuid;
+    target_portfolio_id := (override_item ->> 'portfolio_id')::uuid;
+
+    if (override_item ->> 'user_id')::uuid <> auth.uid() then
+      raise exception 'permission_denied'
+        using errcode = '42501';
+    end if;
+
+    perform 1
+    from public.portfolios
+    where id = target_portfolio_id
+      and user_id = auth.uid();
+
+    if not found then
+      raise exception 'portfolio_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    perform 1
+    from public.stocks
+    where id = target_stock_id
+      and user_id = auth.uid();
+
+    if not found then
+      raise exception 'stock_not_found'
+        using errcode = 'P0002';
+    end if;
+
+    insert into public.portfolio_stock_overrides (
+      id,
+      user_id,
+      portfolio_id,
+      stock_id,
+      industry_override,
+      created_at,
+      updated_at
+    )
+    values (
+      (override_item ->> 'id')::uuid,
+      auth.uid(),
+      target_portfolio_id,
+      target_stock_id,
+      nullif(trim(coalesce(override_item ->> 'industry_override', '')), ''),
+      coalesce(nullif(override_item ->> 'created_at', '')::timestamptz, now()),
+      coalesce(nullif(override_item ->> 'updated_at', '')::timestamptz, now())
+    )
+    on conflict (user_id, portfolio_id, stock_id)
+    do update set
+      industry_override = excluded.industry_override,
+      updated_at = excluded.updated_at;
+  end loop;
+
+  for affected_pair in select * from jsonb_array_elements(coalesce(p_affected_pairs, '[]'::jsonb)) loop
     delete from public.stock_tags
     where user_id = auth.uid()
-      and stock_id = affected_stock_id;
+      and portfolio_id = (affected_pair ->> 'portfolio_id')::uuid
+      and stock_id = (affected_pair ->> 'stock_id')::uuid;
+
+    delete from public.portfolio_stock_overrides
+    where user_id = auth.uid()
+      and portfolio_id = (affected_pair ->> 'portfolio_id')::uuid
+      and stock_id = (affected_pair ->> 'stock_id')::uuid
+      and not exists (
+        select 1
+        from jsonb_array_elements(coalesce(p_portfolio_stock_overrides, '[]'::jsonb)) as current_override
+        where (current_override ->> 'portfolio_id')::uuid = (affected_pair ->> 'portfolio_id')::uuid
+          and (current_override ->> 'stock_id')::uuid = (affected_pair ->> 'stock_id')::uuid
+      );
   end loop;
 
   for tag_item in select * from jsonb_array_elements(coalesce(p_tags, '[]'::jsonb)) loop
     target_stock_id := (tag_item ->> 'stock_id')::uuid;
+    target_portfolio_id := (tag_item ->> 'portfolio_id')::uuid;
 
     if (tag_item ->> 'user_id')::uuid <> auth.uid() then
       raise exception 'permission_denied'
         using errcode = '42501';
     end if;
 
-    insert into public.stock_tags (id, user_id, stock_id, name)
+    insert into public.stock_tags (id, user_id, portfolio_id, stock_id, name)
     values (
       (tag_item ->> 'id')::uuid,
       auth.uid(),
+      target_portfolio_id,
       target_stock_id,
       tag_item ->> 'name'
     )
-    on conflict (user_id, stock_id, name) do nothing;
+    on conflict (user_id, portfolio_id, stock_id, name) do nothing;
   end loop;
 end;
 $$;

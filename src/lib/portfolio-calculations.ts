@@ -1,4 +1,4 @@
-import type { DashboardMetrics, Portfolio, Position, PositionAdjustment, Stock, StockTag, Trade, UserSettings } from "./types";
+import type { DashboardMetrics, Portfolio, PortfolioStockOverride, Position, PositionAdjustment, Stock, StockTag, Trade, UserSettings } from "./types";
 
 export const DEFAULT_SETTINGS: UserSettings = {
   user_id: "",
@@ -90,15 +90,23 @@ export function compareTradesChronologically(a: Trade, b: Trade) {
   return a.id.localeCompare(b.id);
 }
 
-export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: StockTag[] = [], positionAdjustments: PositionAdjustment[] = []): Position[] {
+export function buildPositions(
+  trades: Trade[],
+  stocks: Stock[],
+  stockTags: StockTag[] = [],
+  positionAdjustments: PositionAdjustment[] = [],
+  portfolioStockOverrides: PortfolioStockOverride[] = []
+): Position[] {
   const stocksById = new Map(stocks.map((stock) => [stock.id, stock]));
   const adjustmentsByKey = latestAdjustmentsByKey(positionAdjustments);
-  const tagsByStockId = stockTags.reduce<Map<string, string[]>>((map, tag) => {
-    const current = map.get(tag.stock_id) ?? [];
+  const tagsByKey = stockTags.reduce<Map<string, string[]>>((map, tag) => {
+    const key = `${tag.portfolio_id ?? "global"}:${tag.stock_id}`;
+    const current = map.get(key) ?? [];
     current.push(tag.name);
-    map.set(tag.stock_id, current);
+    map.set(key, current);
     return map;
   }, new Map());
+  const overridesByKey = latestOverridesByKey(portfolioStockOverrides);
 
   const sortedTrades = [...trades].sort(compareTradesChronologically);
   const tradesByKey = new Map<string, Trade[]>();
@@ -179,7 +187,7 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
       remaining_principal: adjustment.adjusted_cost
     };
 
-    const rebasedTrades = (tradesByKey.get(key) ?? []).filter((trade) => tradeCreatedAtMs(trade) > adjustmentUpdatedAtMs(adjustment));
+    const rebasedTrades = (tradesByKey.get(key) ?? []).filter((trade) => tradeFallsAfterAdjustmentBaseline(trade, adjustment));
     for (const trade of rebasedTrades) {
       applyTradeToOpenState(rebasedDraft, trade);
     }
@@ -207,8 +215,8 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
         stock_id: draft.stock_id,
         symbol: stock?.symbol ?? "",
         name: stock?.name ?? "",
-        industry: stock?.industry || "未分類",
-        tags: tagsByStockId.get(draft.stock_id) ?? [],
+        industry: overridesByKey.get(`${draft.portfolio_id}:${draft.stock_id}`)?.industry_override || stock?.industry || "未分類",
+        tags: tagsByKey.get(`${draft.portfolio_id}:${draft.stock_id}`) ?? tagsByKey.get(`global:${draft.stock_id}`) ?? [],
         quantity: openQuantity,
         holding_cost: openCost,
         average_cost: averageCost,
@@ -225,6 +233,20 @@ export function buildPositions(trades: Trade[], stocks: Stock[], stockTags: Stoc
         total_return_rate: openCost > 0 ? totalProfit / openCost : 0
       };
     });
+}
+
+function latestOverridesByKey(portfolioStockOverrides: PortfolioStockOverride[]) {
+  const overridesByKey = new Map<string, PortfolioStockOverride>();
+
+  for (const override of portfolioStockOverrides) {
+    const key = `${override.portfolio_id}:${override.stock_id}`;
+    const current = overridesByKey.get(key);
+    if (!current || new Date(override.updated_at).getTime() >= new Date(current.updated_at).getTime()) {
+      overridesByKey.set(key, override);
+    }
+  }
+
+  return overridesByKey;
 }
 
 function latestAdjustmentsByKey(positionAdjustments: PositionAdjustment[]) {
@@ -253,6 +275,23 @@ function adjustmentUpdatedAtMs(adjustment: PositionAdjustment) {
   const createdAtMs = new Date(adjustment.created_at).getTime();
   if (Number.isFinite(createdAtMs)) return createdAtMs;
   return Number.POSITIVE_INFINITY;
+}
+
+function adjustmentBaselineTradedAt(adjustment: PositionAdjustment) {
+  return adjustment.baseline_traded_at || adjustment.created_at.slice(0, 10);
+}
+
+function adjustmentBaselineCreatedAtMs(adjustment: PositionAdjustment) {
+  const baselineCreatedAtMs = new Date(adjustment.baseline_created_at ?? "").getTime();
+  if (Number.isFinite(baselineCreatedAtMs)) return baselineCreatedAtMs;
+  return adjustmentUpdatedAtMs(adjustment);
+}
+
+function tradeFallsAfterAdjustmentBaseline(trade: Trade, adjustment: PositionAdjustment) {
+  const baselineTradeDate = adjustmentBaselineTradedAt(adjustment);
+  if (trade.traded_at > baselineTradeDate) return true;
+  if (trade.traded_at < baselineTradeDate) return false;
+  return tradeCreatedAtMs(trade) > adjustmentBaselineCreatedAtMs(adjustment);
 }
 
 function applyTradeToOpenState(

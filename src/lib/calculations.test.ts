@@ -8,7 +8,7 @@ import {
   resolveUnitPriceFromTotalAmount,
   validateSellQuantity
 } from "./calculations";
-import type { Portfolio, PositionAdjustment, Stock, Trade } from "./types";
+import type { Portfolio, PortfolioStockOverride, PositionAdjustment, Stock, StockTag, Trade } from "./types";
 
 const stock: Stock = {
   id: "stock-1",
@@ -160,8 +160,10 @@ describe("buildPositions", () => {
         stock_id: "stock-1",
         adjusted_quantity: 80,
         adjusted_cost: 8640,
-        created_at: "",
-        updated_at: ""
+        baseline_traded_at: "2026-01-02",
+        baseline_created_at: "2026-01-02T00:00:00.000Z",
+        created_at: "2026-01-02T00:00:00.000Z",
+        updated_at: "2026-01-02T00:00:00.000Z"
       }
     ];
 
@@ -232,6 +234,36 @@ describe("buildPositions", () => {
     expect(positions[0].average_cost).toBe(110.4);
   });
 
+  it("uses same-day baseline_created_at to exclude earlier imported trades", () => {
+    const adjustments: PositionAdjustment[] = [
+      {
+        id: "adj-1",
+        user_id: "user-1",
+        portfolio_id: "portfolio-1",
+        stock_id: "stock-1",
+        adjusted_quantity: 50,
+        adjusted_cost: 6000,
+        baseline_traded_at: "2026-01-03",
+        baseline_created_at: "2026-01-03T09:00:00.000Z",
+        created_at: "2026-01-03T09:00:00.000Z",
+        updated_at: "2026-01-03T09:00:00.000Z"
+      }
+    ];
+
+    const positions = buildPositions(
+      [
+        trade({ id: "same-day-early", traded_at: "2026-01-03", created_at: "2026-01-03T08:00:00.000Z", quantity: 10, gross_amount: 1000, fee: 12.83, net_amount: 1012.83 }),
+        trade({ id: "same-day-late", traded_at: "2026-01-03", created_at: "2026-01-03T10:00:00.000Z", quantity: 20, gross_amount: 2400, fee: 12.83, net_amount: 2412.83, unit_price: 120 })
+      ],
+      [stock],
+      [],
+      adjustments
+    );
+
+    expect(positions[0].quantity).toBe(70);
+    expect(positions[0].holding_cost).toBe(8412.83);
+  });
+
   it("includes buy fees in holding cost while keeping average cost fee-free", () => {
     const positions = buildPositions([trade({ quantity: 100, gross_amount: 10000, fee: 12.83, net_amount: 10012.83 })], [stock]);
 
@@ -272,6 +304,29 @@ describe("buildPositions", () => {
 
     expect(positions[0].quantity).toBe(40);
     expect(positions[0].realized_profit).toBeCloseTo(1146.4, 6);
+  });
+
+  it("uses portfolio-scoped tags and industry overrides before global stock data", () => {
+    const tags: StockTag[] = [
+      { id: "global-tag", user_id: "user-1", stock_id: "stock-1", name: "全域標籤" },
+      { id: "scoped-tag", user_id: "user-1", portfolio_id: "portfolio-1", stock_id: "stock-1", name: "帳本標籤" }
+    ];
+    const overrides: PortfolioStockOverride[] = [
+      {
+        id: "override-1",
+        user_id: "user-1",
+        portfolio_id: "portfolio-1",
+        stock_id: "stock-1",
+        industry_override: "ETF",
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z"
+      }
+    ];
+
+    const positions = buildPositions([trade({ quantity: 100, net_amount: 10012.83 })], [stock], tags, [], overrides);
+
+    expect(positions[0].industry).toBe("ETF");
+    expect(positions[0].tags).toEqual(["帳本標籤"]);
   });
 });
 
