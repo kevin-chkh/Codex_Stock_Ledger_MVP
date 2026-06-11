@@ -110,6 +110,7 @@ export function buildPositions(
 
   const sortedTrades = [...trades].sort(compareTradesChronologically);
   const tradesByKey = new Map<string, Trade[]>();
+  const latestTradePriceByKey = new Map<string, number>();
 
   const drafts = new Map<
     string,
@@ -130,6 +131,7 @@ export function buildPositions(
     const currentTrades = tradesByKey.get(key) ?? [];
     currentTrades.push(trade);
     tradesByKey.set(key, currentTrades);
+    latestTradePriceByKey.set(key, trade.unit_price);
     const draft =
       drafts.get(key) ??
       {
@@ -201,10 +203,15 @@ export function buildPositions(
     })
     .map((draft) => {
       const stock = stocksById.get(draft.stock_id);
-      const currentPrice = stock?.current_price ?? 0;
+      const key = `${draft.portfolio_id}:${draft.stock_id}`;
       const openQuantity = Math.max(roundMoney(draft.quantity), 0);
       const openCost = Math.max(roundMoney(draft.remaining_cost), 0);
       const openPrincipal = Math.max(roundMoney(draft.remaining_principal), 0);
+      const fallbackAveragePrice = openQuantity > 0 ? roundMoney(openPrincipal / openQuantity) : 0;
+      const currentPrice =
+        stock?.current_price && stock.current_price > 0
+          ? stock.current_price
+          : latestTradePriceByKey.get(key) ?? fallbackAveragePrice;
       const marketValue = roundMoney(openQuantity * currentPrice);
       const unrealizedProfit = roundMoney(marketValue - openCost);
       const totalProfit = roundMoney(draft.realized_profit + unrealizedProfit);

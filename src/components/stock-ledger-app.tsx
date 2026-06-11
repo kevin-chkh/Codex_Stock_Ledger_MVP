@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   BookOpen,
@@ -67,6 +67,11 @@ type QuotePayload = {
   failedSymbols: string[];
 };
 
+type QuoteRefreshResult = {
+  updatedSymbols: string[];
+  failedSymbols: string[];
+};
+
 type CsvImportSummary = {
   totalRows: number;
   importedCount: number;
@@ -87,6 +92,9 @@ type ConfirmState =
 const LOCAL_STORAGE_KEY = "stock-ledger-local-v1";
 const PORTFOLIO_SCOPE_STORAGE_KEY = "stock-ledger-selected-portfolio-scope-v1";
 const DEMO_BANNER_DISMISSED_KEY = "stock-ledger-demo-banner-dismissed-v1";
+const CLOSE_QUOTE_REFRESH_DATE_KEY = "stock-ledger-close-quote-refresh-date-v1";
+const BACKGROUND_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const FOREGROUND_SYNC_MIN_INTERVAL_MS = 30 * 1000;
 
 const tradeSchema = z.object({
   portfolioId: z.string().min(1, "請選擇帳本"),
@@ -159,6 +167,14 @@ function formatQuoteUpdatedAt(value: string | null) {
   }).format(date);
 }
 
+function formatSymbolList(symbols: string[], limit = 8) {
+  const uniqueSymbols = [...new Set(symbols.map((symbol) => symbol.trim()).filter(Boolean))];
+  if (!uniqueSymbols.length) return "無";
+  const visible = uniqueSymbols.slice(0, limit).join("、");
+  const remaining = uniqueSymbols.length - limit;
+  return remaining > 0 ? `${visible} 等 ${uniqueSymbols.length} 檔` : visible;
+}
+
 function toUserError(error: unknown, fallback: string) {
   if (error && typeof error === "object" && "message" in error && typeof (error as { message: unknown }).message === "string") {
     const message = String((error as { message: string }).message);
@@ -184,6 +200,7 @@ function taipeiNow() {
 
   const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
   return {
+    date: `${pick("year")}-${pick("month")}-${pick("day")}`,
     weekday: pick("weekday"),
     hour: Number(pick("hour")),
     minute: Number(pick("minute")),
@@ -196,6 +213,13 @@ function isTaiwanMarketHours() {
   if (now.weekday === "Sat" || now.weekday === "Sun") return false;
   const totalMinutes = now.hour * 60 + now.minute;
   return totalMinutes >= 8 * 60 + 30 && totalMinutes < 14 * 60;
+}
+
+function isTaiwanAfterCloseRefreshTime() {
+  const now = taipeiNow();
+  if (now.weekday === "Sat" || now.weekday === "Sun") return false;
+  const totalMinutes = now.hour * 60 + now.minute;
+  return totalMinutes >= 14 * 60;
 }
 
 const emptyTradeDraft: TradeDraft = {
@@ -232,6 +256,7 @@ export default function StockLedgerApp() {
   const [catalogSource, setCatalogSource] = useState<"api" | "cache" | "fallback">("fallback");
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [quoteRefreshing, setQuoteRefreshing] = useState(false);
+  const [quoteFailedSymbols, setQuoteFailedSymbols] = useState<string[]>([]);
   const [formError, setFormError] = useState("");
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   const [editingPortfolioId, setEditingPortfolioId] = useState<string | null>(null);
@@ -244,6 +269,8 @@ export default function StockLedgerApp() {
   const [stockAdjustBaseline, setStockAdjustBaseline] = useState({ quantity: 0, holdingCost: 0 });
   const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+  const backgroundSyncInFlightRef = useRef(false);
+  const lastBackgroundSyncAtRef = useRef(0);
 
   const catalogBySymbol = useMemo(() => new Map(stockCatalog.map((item) => [item.symbol, item])), [stockCatalog]);
   const effectiveStocks = useMemo(
@@ -277,6 +304,7 @@ export default function StockLedgerApp() {
   const defaultTradePortfolioId = useMemo(() => activePortfolioId || portfolios[0]?.id || "", [activePortfolioId, portfolios]);
   const metrics = useMemo(() => calculateDashboardMetrics(scopedPortfolios, scopedPositions), [scopedPortfolios, scopedPositions]);
   const catalogSourceLabel = catalogSource === "api" ? "API" : catalogSource === "cache" ? "本地快取" : "fallback";
+  const quoteStatusLabel = isTaiwanMarketHours() ? "盤中自動更新" : isTaiwanAfterCloseRefreshTime() ? "收盤後更新" : "收盤價";
 
   useEffect(() => {
     void initialize();
@@ -341,6 +369,77 @@ export default function StockLedgerApp() {
       window.clearInterval(timer);
     };
   }, [stockCatalog.length, stockSignature, userId]);
+
+  useEffect(() => {
+    if (!userId || !stockSignature) return;
+
+    let cancelled = false;
+    const runCloseRefresh = async () => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (!isTaiwanAfterCloseRefreshTime()) return;
+      const todayKey = taipeiNow().date;
+      const lastRefreshedDate = typeof window !== "undefined" ? window.localStorage.getItem(CLOSE_QUOTE_REFRESH_DATE_KEY) : null;
+      if (lastRefreshedDate === todayKey) return;
+      const result = await refreshQuotesForStocks(stocks, false);
+      if (result.updatedSymbols.length && typeof window !== "undefined") {
+        window.localStorage.setItem(CLOSE_QUOTE_REFRESH_DATE_KEY, todayKey);
+      }
+    };
+    const onForeground = () => {
+      void runCloseRefresh();
+    };
+
+    void runCloseRefresh();
+    window.addEventListener("focus", onForeground);
+    document.addEventListener("visibilitychange", onForeground);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onForeground);
+      document.removeEventListener("visibilitychange", onForeground);
+    };
+  }, [stockSignature, stocks, userId]);
+
+  useEffect(() => {
+    if (!supabase || !hasSupabaseEnv || !userId || userId === "demo") return;
+
+    let cancelled = false;
+    const canSync = () => {
+      if (cancelled) return false;
+      if (sheetMode || confirmState) return false;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return false;
+      return true;
+    };
+    const sync = async (force = false) => {
+      if (!canSync() || backgroundSyncInFlightRef.current) return;
+      const now = Date.now();
+      if (!force && now - lastBackgroundSyncAtRef.current < FOREGROUND_SYNC_MIN_INTERVAL_MS) return;
+      backgroundSyncInFlightRef.current = true;
+      try {
+        await loadCloudData(userId);
+        lastBackgroundSyncAtRef.current = Date.now();
+      } finally {
+        backgroundSyncInFlightRef.current = false;
+      }
+    };
+    const onForeground = () => {
+      void sync(false);
+    };
+
+    const timer = window.setInterval(() => {
+      void sync(true);
+    }, BACKGROUND_SYNC_INTERVAL_MS);
+    window.addEventListener("focus", onForeground);
+    document.addEventListener("visibilitychange", onForeground);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onForeground);
+      document.removeEventListener("visibilitychange", onForeground);
+    };
+  }, [confirmState, sheetMode, userId]);
 
   async function initialize() {
     try {
@@ -457,7 +556,7 @@ export default function StockLedgerApp() {
   async function refreshQuotesForStocks(targetStocks: Stock[], showResultMessage = true) {
     if (!targetStocks.length) {
       if (showResultMessage) setMessage("尚無股票可更新現價。");
-      return false;
+      return { updatedSymbols: [], failedSymbols: [] };
     }
 
     setQuoteRefreshing(true);
@@ -477,12 +576,12 @@ export default function StockLedgerApp() {
       const payload = (await response.json()) as QuotePayload;
       const quoteMap = new Map(payload.quotes.map((quote) => [quote.symbol, quote]));
       const now = new Date().toISOString();
-      let updatedCount = 0;
+      const updatedSymbols: string[] = [];
 
       const nextTargetStocks = targetStocks.map((stock) => {
         const quote = quoteMap.get(stock.symbol);
         if (!quote) return stock;
-        updatedCount += 1;
+        updatedSymbols.push(stock.symbol);
         return {
           ...stock,
           market: quote.market || stock.market,
@@ -492,7 +591,7 @@ export default function StockLedgerApp() {
         };
       });
 
-      if (updatedCount && supabase && hasSupabaseEnv) {
+      if (updatedSymbols.length && supabase && hasSupabaseEnv) {
         const updates = nextTargetStocks.filter(
           (stock, index) =>
             stock.current_price !== targetStocks[index]?.current_price ||
@@ -514,7 +613,7 @@ export default function StockLedgerApp() {
         }
       }
 
-      if (updatedCount) {
+      if (updatedSymbols.length) {
         setStocks((current) =>
           current.map((stock) => {
             const quote = quoteMap.get(stock.symbol);
@@ -529,20 +628,22 @@ export default function StockLedgerApp() {
           })
         );
       }
+      setQuoteFailedSymbols(payload.failedSymbols ?? []);
 
       if (showResultMessage) {
-        if (!updatedCount) {
-          setMessage("目前查無可更新的盤中報價。");
+        if (!updatedSymbols.length) {
+          setMessage("目前查無可更新的盤中報價：" + formatSymbolList(payload.failedSymbols));
         } else {
-          const failed = payload.failedSymbols?.length ? `，${payload.failedSymbols.length} 檔暫時查無盤中報價` : "";
-          setMessage(`現價已更新 ${updatedCount} 檔${failed}。`);
+          const failed = payload.failedSymbols?.length ? `；未更新：${formatSymbolList(payload.failedSymbols)}` : "";
+          setMessage(`現價已更新 ${updatedSymbols.length} 檔：${formatSymbolList(updatedSymbols)}${failed}。`);
         }
       }
-      return updatedCount > 0;
+      return { updatedSymbols, failedSymbols: payload.failedSymbols ?? [] };
     } catch (error) {
       console.error("Failed to refresh quotes", error);
+      setQuoteFailedSymbols(targetStocks.map((stock) => stock.symbol));
       if (showResultMessage) setMessage("更新現價失敗，請稍後再試。");
-      return false;
+      return { updatedSymbols: [], failedSymbols: targetStocks.map((stock) => stock.symbol) };
     } finally {
       setQuoteRefreshing(false);
     }
@@ -1093,10 +1194,12 @@ export default function StockLedgerApp() {
     setEditingTradeId(null);
     setTradeDraft({ ...emptyTradeDraft, portfolioId: portfolio.id });
     setFormError("");
-    await reloadCloudDataAfterWrite();
-    const quoteUpdated = await refreshQuotesForStocks([stock], false);
-    if (quoteUpdated) await reloadCloudDataAfterWrite();
-    setMessage(quoteUpdated ? "儲存成功，現價已更新。" : "儲存成功，但現價暫時未更新。");
+    const quoteResult = await refreshQuotesForStocks([stock], false);
+    setMessage(
+      quoteResult.updatedSymbols.length
+        ? `儲存成功，現價已更新：${formatSymbolList(quoteResult.updatedSymbols)}。`
+        : `儲存成功，但現價暫時未更新：${formatSymbolList(quoteResult.failedSymbols.length ? quoteResult.failedSymbols : [stock.symbol])}。`
+    );
     setSheetMode(null);
   }
 
@@ -1754,6 +1857,10 @@ export default function StockLedgerApp() {
         <div>
           <p className="text-xs font-semibold text-mint">Stock Ledger</p>
           <h1 className="text-lg font-bold">股票交易帳本</h1>
+          <p className="mt-1 text-[11px] text-ink/50">
+            現價：{quoteStatusLabel} · 上次 {formatQuoteUpdatedAt(latestQuoteAt)}
+            {quoteFailedSymbols.length ? ` · 未更新 ${formatSymbolList(quoteFailedSymbols, 4)}` : ""}
+          </p>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -1922,7 +2029,7 @@ export default function StockLedgerApp() {
                 dataSyncInfo={{
                   catalogSourceLabel,
                   latestQuoteLabel: formatQuoteUpdatedAt(latestQuoteAt),
-                  autoRefreshLabel: "盤中自動更新"
+                  autoRefreshLabel: quoteStatusLabel
                 }}
                 onSubmit={updateSettings}
                 onExport={exportJsonBackup}

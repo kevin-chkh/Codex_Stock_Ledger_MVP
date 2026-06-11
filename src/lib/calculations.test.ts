@@ -151,6 +151,21 @@ describe("buildPositions", () => {
     expect(positions[0].price_updated_at).toBeNull();
   });
 
+  it("falls back to the latest trade price when current price is missing", () => {
+    const positions = buildPositions(
+      [
+        trade({ id: "1", type: "buy", quantity: 100, unit_price: 100, gross_amount: 10000, fee: 20, net_amount: 10020 }),
+        trade({ id: "2", type: "sell", quantity: 50, unit_price: 130, gross_amount: 6500, fee: 20, tax: 19.5, net_amount: 6460.5, traded_at: "2026-01-02" })
+      ],
+      [{ ...stock, current_price: 0 }]
+    );
+
+    expect(positions[0].quantity).toBe(50);
+    expect(positions[0].current_price).toBe(130);
+    expect(positions[0].market_value).toBe(6500);
+    expect(positions[0].unrealized_return_rate).toBeGreaterThan(-1);
+  });
+
   it("applies position adjustments to open quantity and cost", () => {
     const adjustments: PositionAdjustment[] = [
       {
