@@ -147,7 +147,11 @@ describe("buildPositions", () => {
     expect(positions[0].paid_fee).toBe(60);
     expect(positions[0].paid_tax).toBe(19.5);
     expect(positions[0].realized_profit).toBe(950.5);
-    expect(positions[0].unrealized_profit).toBe(-30);
+    expect(positions[0].book_profit).toBe(-30);
+    expect(positions[0].estimated_sell_fee).toBe(21.16);
+    expect(positions[0].estimated_sell_tax).toBe(49.5);
+    expect(positions[0].estimated_profit).toBe(-100.66);
+    expect(positions[0].unrealized_profit).toBe(-100.66);
     expect(positions[0].price_updated_at).toBeNull();
   });
 
@@ -287,6 +291,26 @@ describe("buildPositions", () => {
     expect(positions[0].average_cost).toBe(100);
   });
 
+  it("calculates estimated profit after future sell fee and stock transaction tax", () => {
+    const position = buildPositions([trade({ quantity: 100, gross_amount: 10000, fee: 20, net_amount: 10020 })], [stock])[0];
+
+    expect(position.market_value).toBe(11000);
+    expect(position.book_profit).toBe(980);
+    expect(position.estimated_sell_fee).toBe(14.11);
+    expect(position.estimated_sell_tax).toBe(33);
+    expect(position.estimated_profit).toBe(932.89);
+    expect(position.estimated_return_rate).toBeCloseTo(0.0931, 4);
+  });
+
+  it("uses 0.1 percent estimated transaction tax for ETFs", () => {
+    const etfStock = { ...stock, symbol: "0050", name: "元大台灣50", industry: "ETF" };
+    const position = buildPositions([trade({ quantity: 100, gross_amount: 10000, fee: 20, net_amount: 10020 })], [etfStock])[0];
+
+    expect(position.estimated_sell_fee).toBe(14.11);
+    expect(position.estimated_sell_tax).toBe(11);
+    expect(position.estimated_profit).toBe(954.89);
+  });
+
   it("rejects selling more than current holdings", () => {
     const result = validateSellQuantity([trade({ quantity: 100 })], "stock-1", "portfolio-1", 101);
 
@@ -368,8 +392,9 @@ describe("calculateDashboardMetrics", () => {
     expect(metrics.holdingCost).toBe(10020);
     expect(metrics.holdingsValue).toBe(11000);
     expect(metrics.totalAssets).toBe(61000);
-    expect(metrics.unrealizedProfit).toBe(980);
-    expect(metrics.totalReturnRate).toBe(0.0098);
+    expect(metrics.estimatedProfit).toBe(932.89);
+    expect(metrics.unrealizedProfit).toBe(932.89);
+    expect(metrics.totalReturnRate).toBe(0.0093289);
   });
 
   it("uses only current inventory holding cost for dashboard holding cost", () => {
@@ -400,7 +425,8 @@ describe("calculateDashboardMetrics", () => {
 
     expect(metrics.holdingCost).toBe(10020);
     expect(metrics.holdingsValue).toBe(11000);
-    expect(metrics.unrealizedProfit).toBe(980);
+    expect(metrics.estimatedProfit).toBe(932.89);
+    expect(metrics.unrealizedProfit).toBe(932.89);
     expect(metrics.realizedProfit).toBe(1200);
   });
 });

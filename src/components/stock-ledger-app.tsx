@@ -285,8 +285,8 @@ export default function StockLedgerApp() {
     [stocks, catalogBySymbol]
   );
   const positions = useMemo(
-    () => buildPositions(trades, effectiveStocks, stockTags, positionAdjustments, portfolioStockOverrides),
-    [trades, effectiveStocks, stockTags, positionAdjustments, portfolioStockOverrides]
+    () => buildPositions(trades, effectiveStocks, stockTags, positionAdjustments, portfolioStockOverrides, settings),
+    [trades, effectiveStocks, stockTags, positionAdjustments, portfolioStockOverrides, settings]
   );
   const stockSignature = useMemo(() => stocks.map((stock) => stock.id).sort().join("|"), [stocks]);
   const latestQuoteAt = useMemo(() => {

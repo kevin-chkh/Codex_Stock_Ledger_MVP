@@ -95,7 +95,8 @@ export function buildPositions(
   stocks: Stock[],
   stockTags: StockTag[] = [],
   positionAdjustments: PositionAdjustment[] = [],
-  portfolioStockOverrides: PortfolioStockOverride[] = []
+  portfolioStockOverrides: PortfolioStockOverride[] = [],
+  settings: Pick<UserSettings, "fee_rate" | "minimum_fee" | "tax_rate"> = DEFAULT_SETTINGS
 ): Position[] {
   const stocksById = new Map(stocks.map((stock) => [stock.id, stock]));
   const adjustmentsByKey = latestAdjustmentsByKey(positionAdjustments);
@@ -213,8 +214,11 @@ export function buildPositions(
           ? stock.current_price
           : latestTradePriceByKey.get(key) ?? fallbackAveragePrice;
       const marketValue = roundMoney(openQuantity * currentPrice);
-      const unrealizedProfit = roundMoney(marketValue - openCost);
-      const totalProfit = roundMoney(draft.realized_profit + unrealizedProfit);
+      const bookProfit = roundMoney(marketValue - openCost);
+      const estimatedSellFee = openQuantity > 0 ? calculateFee(marketValue, settings) : 0;
+      const estimatedSellTax = openQuantity > 0 ? calculateEstimatedSellTax(marketValue, stock, settings) : 0;
+      const estimatedProfit = roundMoney(marketValue - estimatedSellFee - estimatedSellTax - openCost);
+      const totalProfit = roundMoney(draft.realized_profit + estimatedProfit);
       const averageCost = openQuantity > 0 ? roundMoney(openPrincipal / openQuantity) : 0;
 
       return {
@@ -234,12 +238,33 @@ export function buildPositions(
         current_price: currentPrice,
         price_updated_at: stock?.price_updated_at ?? null,
         market_value: marketValue,
-        unrealized_profit: unrealizedProfit,
-        unrealized_return_rate: openCost > 0 ? unrealizedProfit / openCost : 0,
+        book_profit: bookProfit,
+        estimated_sell_fee: estimatedSellFee,
+        estimated_sell_tax: estimatedSellTax,
+        estimated_profit: estimatedProfit,
+        estimated_return_rate: openCost > 0 ? estimatedProfit / openCost : 0,
+        unrealized_profit: estimatedProfit,
+        unrealized_return_rate: openCost > 0 ? estimatedProfit / openCost : 0,
         total_profit: totalProfit,
         total_return_rate: openCost > 0 ? totalProfit / openCost : 0
       };
     });
+}
+
+function calculateEstimatedSellTax(
+  grossAmount: number,
+  stock: Stock | undefined,
+  settings: Pick<UserSettings, "tax_rate">
+) {
+  if (grossAmount <= 0) return 0;
+  const taxRate = isTaiwanEtf(stock) ? 0.001 : settings.tax_rate;
+  return roundMoney(grossAmount * taxRate);
+}
+
+function isTaiwanEtf(stock: Stock | undefined) {
+  const symbol = stock?.symbol.trim() ?? "";
+  const industry = stock?.industry?.trim().toUpperCase() ?? "";
+  return industry.includes("ETF") || /^00\d+/.test(symbol);
 }
 
 function latestOverridesByKey(portfolioStockOverrides: PortfolioStockOverride[]) {
@@ -345,9 +370,9 @@ export function calculateDashboardMetrics(portfolios: Portfolio[], positions: Po
   const holdingCost = roundMoney(openPositions.reduce((sum, position) => sum + position.holding_cost, 0));
   const holdingsValue = roundMoney(openPositions.reduce((sum, position) => sum + position.market_value, 0));
   const realizedProfit = roundMoney(positions.reduce((sum, position) => sum + position.realized_profit, 0));
-  const unrealizedProfit = roundMoney(openPositions.reduce((sum, position) => sum + position.unrealized_profit, 0));
-  // 總持股報酬 = 已實現損益 + 未實現損益
-  const totalProfit = roundMoney(realizedProfit + unrealizedProfit);
+  const estimatedProfit = roundMoney(openPositions.reduce((sum, position) => sum + position.estimated_profit, 0));
+  // 總持股報酬 = 已實現損益 + 預估損益
+  const totalProfit = roundMoney(realizedProfit + estimatedProfit);
   const totalDeposits = portfolios.reduce((sum, portfolio) => sum + portfolio.total_deposits, 0);
 
   return {
@@ -357,7 +382,8 @@ export function calculateDashboardMetrics(portfolios: Portfolio[], positions: Po
     holdingsValue,
     totalAssets: roundMoney(cash + holdingsValue),
     realizedProfit,
-    unrealizedProfit,
+    estimatedProfit,
+    unrealizedProfit: estimatedProfit,
     totalProfit,
     totalReturnRate: totalDeposits > 0 ? totalProfit / totalDeposits : 0
   };

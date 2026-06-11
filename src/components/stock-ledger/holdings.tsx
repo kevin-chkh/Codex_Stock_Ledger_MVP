@@ -2,7 +2,7 @@ import { ChevronDown, ChevronUp, Download, LayoutGrid, List, MoreHorizontal, Sea
 import { useMemo, useState } from "react";
 import { currency, decimal, percent, profitClass } from "@/lib/format";
 import type { Portfolio, Position } from "@/lib/types";
-import { ListSection, PortfolioScopePicker } from "./ui";
+import { InfoTip, ListSection, PortfolioScopePicker } from "./ui";
 
 export function Holdings({
   positions,
@@ -72,8 +72,8 @@ export function Holdings({
       .sort((a, b) => {
         if (a.quantity === 0 && b.quantity > 0) return 1;
         if (a.quantity > 0 && b.quantity === 0) return -1;
-        if (sortBy === "returnRate") return b.unrealized_return_rate - a.unrealized_return_rate;
-        if (sortBy === "profit") return b.unrealized_profit - a.unrealized_profit;
+        if (sortBy === "returnRate") return b.estimated_return_rate - a.estimated_return_rate;
+        if (sortBy === "profit") return b.estimated_profit - a.estimated_profit;
         if (sortBy === "symbol") return a.symbol.localeCompare(b.symbol);
         return b.market_value - a.market_value;
       });
@@ -165,7 +165,7 @@ export function Holdings({
           <select className="col-span-2 rounded-md border border-ink/15 bg-white px-3 py-2 text-sm outline-none focus:border-mint" value={sortBy} onChange={(event) => setSortBy(event.target.value as "marketValue" | "returnRate" | "profit" | "symbol")}>
             <option value="marketValue">市值高到低</option>
             <option value="returnRate">報酬率高到低</option>
-            <option value="profit">未實現損益高到低</option>
+            <option value="profit">預估損益高到低</option>
             <option value="symbol">代號小到大</option>
           </select>
         </div>
@@ -252,8 +252,8 @@ export function Holdings({
                         ) : (
                           <>
                             <p className="text-sm font-semibold">{currency(position.market_value)}</p>
-                            <p className={"mt-1 text-xs " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
-                            <p className={"mt-0.5 text-xs font-semibold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
+                            <p className={"mt-1 text-xs " + profitClass(position.estimated_profit)}>{percent(position.estimated_return_rate)}</p>
+                            <p className={"mt-0.5 text-xs font-semibold " + profitClass(position.estimated_profit)}>{currency(position.estimated_profit)}</p>
                           </>
                         )}
                       </div>
@@ -398,13 +398,26 @@ function ExpandedHoldingCard({
         </div>
         <div className="rounded-lg bg-white px-4 py-4">
           <p className="text-[11px] text-ink/45">報酬率</p>
-          <p className={"mt-2 text-lg font-semibold " + profitClass(position.unrealized_profit)}>{percent(position.unrealized_return_rate)}</p>
+          <p className={"mt-2 text-lg font-semibold " + profitClass(position.estimated_profit)}>{percent(position.estimated_return_rate)}</p>
         </div>
       </div>
 
-      <div className="mt-3 rounded-lg bg-white px-4 py-4">
-        <p className="text-[11px] text-ink/45">預估損益</p>
-        <p className={"mt-2 text-2xl font-bold " + profitClass(position.unrealized_profit)}>{currency(position.unrealized_profit)}</p>
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <div className="rounded-lg bg-white px-4 py-4">
+          <p className="text-[11px] text-ink/45">帳面損益</p>
+          <p className={"mt-2 text-lg font-semibold " + profitClass(position.book_profit)}>{currency(position.book_profit)}</p>
+        </div>
+        <div className="rounded-lg bg-white px-4 py-4">
+          <div className="flex items-center gap-1">
+            <p className="text-[11px] text-ink/45">預估損益</p>
+            <InfoTip label="預估損益說明" body={["預估損益已扣除賣出手續費與證交稅。", "報酬率使用預估損益除以目前庫存的累積買進成本。"]} />
+          </div>
+          <p className={"mt-2 text-lg font-semibold " + profitClass(position.estimated_profit)}>{currency(position.estimated_profit)}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg bg-white px-4 py-3 text-xs text-ink/55">
+        預估賣出成本：手續費 {currency(position.estimated_sell_fee)} · 證交稅 {currency(position.estimated_sell_tax)}
       </div>
 
       {position.realized_profit !== 0 ? (

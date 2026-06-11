@@ -113,6 +113,11 @@ export type Position = {
   current_price: number;
   price_updated_at: string | null;
   market_value: number;
+  book_profit: number;
+  estimated_sell_fee: number;
+  estimated_sell_tax: number;
+  estimated_profit: number;
+  estimated_return_rate: number;
   unrealized_profit: number;
   unrealized_return_rate: number;
   total_profit: number;
@@ -126,6 +131,7 @@ export type DashboardMetrics = {
   holdingsValue: number;
   totalAssets: number;
   realizedProfit: number;
+  estimatedProfit: number;
   unrealizedProfit: number;
   totalProfit: number;
   totalReturnRate: number;

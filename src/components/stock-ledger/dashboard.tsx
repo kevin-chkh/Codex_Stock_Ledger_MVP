@@ -62,7 +62,7 @@ export function Dashboard({
       };
       current.quantity += position.quantity;
       current.realizedProfit += position.realized_profit;
-      current.unrealizedProfit += position.unrealized_profit;
+      current.unrealizedProfit += position.estimated_profit;
       grouped.set(position.stock_id, current);
     }
 
@@ -139,12 +139,12 @@ export function Dashboard({
               <InfoTip
                 label="總持股報酬說明"
                 body={[
-                  "總持股報酬等於已實現損益加未實現損益。",
-                  "它反映目前持倉與已賣出部位合計的持股獲利表現。"
+                  "總持股報酬等於已實現損益加預估損益。",
+                  "預估損益已扣除未來賣出手續費與證交稅。"
                 ]}
               />
             </div>
-            <p className={"mt-2 text-lg font-semibold " + toneClass(metrics.unrealizedProfit + metrics.realizedProfit)}>{currency(metrics.realizedProfit + metrics.unrealizedProfit)}</p>
+            <p className={"mt-2 text-lg font-semibold " + toneClass(metrics.estimatedProfit + metrics.realizedProfit)}>{currency(metrics.realizedProfit + metrics.estimatedProfit)}</p>
           </div>
         </div>
       </section>
@@ -157,15 +157,15 @@ export function Dashboard({
           onClick={() => setDetailMode((current) => (current === "realized" ? null : "realized"))}
         />
         <SmallCard
-          label="未實現損益"
-          value={currency(metrics.unrealizedProfit)}
-          valueClass={profitClass(metrics.unrealizedProfit)}
+          label="預估損益"
+          value={currency(metrics.estimatedProfit)}
+          valueClass={profitClass(metrics.estimatedProfit)}
           hint="點擊查看各股明細"
           onClick={() => setDetailMode((current) => (current === "unrealized" ? null : "unrealized"))}
         />
       </section>
       {detailMode && (
-        <ListSection title={detailMode === "realized" ? "已實現損益明細" : "未實現損益明細"} empty="目前沒有可顯示的股票明細">
+        <ListSection title={detailMode === "realized" ? "已實現損益明細" : "預估損益明細"} empty="目前沒有可顯示的股票明細">
           {detailItems.map((item) => (
             <Row
               key={item.symbol}
@@ -175,7 +175,7 @@ export function Dashboard({
                   ? item.quantity === 0
                     ? "已實現損益 · 已清倉"
                     : "已實現損益"
-                  : "未實現損益 · 報酬率 " + percent(item.unrealizedReturnRate)
+                  : "預估損益 · 報酬率 " + percent(item.unrealizedReturnRate)
               }
               right={currency(detailMode === "realized" ? item.realizedProfit : item.unrealizedProfit)}
               rightClass={profitClass(detailMode === "realized" ? item.realizedProfit : item.unrealizedProfit)}
@@ -210,8 +210,8 @@ export function Dashboard({
               </div>
             </div>
             <div className="mt-3 flex items-center justify-between text-sm">
-              <span className={profitClass(position.unrealized_profit)}>{"損益 " + currency(position.unrealized_profit)}</span>
-              <span className={profitClass(position.unrealized_profit)}>{"報酬率 " + percent(position.unrealized_return_rate)}</span>
+              <span className={profitClass(position.estimated_profit)}>{"預估 " + currency(position.estimated_profit)}</span>
+              <span className={profitClass(position.estimated_profit)}>{"報酬率 " + percent(position.estimated_return_rate)}</span>
             </div>
           </div>
         ))}

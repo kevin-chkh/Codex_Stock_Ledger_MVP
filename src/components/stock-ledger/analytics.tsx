@@ -251,13 +251,13 @@ export function Analytics({
 
   const maxGainPosition = useMemo(() => {
     if (!filteredPositions.length) return null;
-    return [...filteredPositions].sort((a, b) => b.unrealized_profit - a.unrealized_profit)[0] ?? null;
+    return [...filteredPositions].sort((a, b) => b.estimated_profit - a.estimated_profit)[0] ?? null;
   }, [filteredPositions]);
 
   const maxLossPosition = useMemo(() => {
-    const losers = filteredPositions.filter((position) => position.unrealized_profit < 0);
+    const losers = filteredPositions.filter((position) => position.estimated_profit < 0);
     if (!losers.length) return null;
-    return [...losers].sort((a, b) => a.unrealized_profit - b.unrealized_profit)[0] ?? null;
+    return [...losers].sort((a, b) => a.estimated_profit - b.estimated_profit)[0] ?? null;
   }, [filteredPositions]);
 
   const recentTrades = useMemo(() => {
@@ -421,7 +421,7 @@ export function Analytics({
 
     for (const position of sourcePositions) {
       const valueBasis = getPositionBasisValue(position, analysisBasis);
-      const metricValue = position.unrealized_profit;
+      const metricValue = position.estimated_profit;
       const current = grouped.get(position.stock_id) ?? {
         key: position.stock_id,
         label: position.symbol + " " + position.name,
@@ -433,7 +433,7 @@ export function Analytics({
         details: []
       };
       current.realized = roundMoney(current.realized + position.realized_profit);
-      current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
+      current.unrealized = roundMoney(current.unrealized + position.estimated_profit);
       current.marketValue = roundMoney(current.marketValue + position.market_value);
       current.basisValue = roundMoney(current.basisValue + valueBasis);
       current.returnRate = current.basisValue > 0 ? roundMoney(current.unrealized / current.basisValue) : 0;
@@ -520,7 +520,7 @@ export function Analytics({
       }
       const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number; basisValue: number; details: ContributionDetailRow[] }>();
       for (const position of sourcePositions) {
-        const metricValue = position.unrealized_profit;
+        const metricValue = position.estimated_profit;
         const basisValue = getPositionBasisValue(position, analysisBasis);
         const current = grouped.get(position.industry) ?? {
           label: position.industry,
@@ -531,7 +531,7 @@ export function Analytics({
           details: []
         };
         current.realized = roundMoney(current.realized + position.realized_profit);
-        current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
+        current.unrealized = roundMoney(current.unrealized + position.estimated_profit);
         current.basisValue = roundMoney(current.basisValue + basisValue);
         current.count += 1;
         current.details.push({
@@ -606,7 +606,7 @@ export function Analytics({
 
     const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number; basisValue: number; details: ContributionDetailRow[] }>();
     for (const position of sourcePositions) {
-      const metricValue = position.unrealized_profit;
+      const metricValue = position.estimated_profit;
       const basisValue = getPositionBasisValue(position, analysisBasis);
       const tags = position.tags.length ? position.tags : ["未標籤"];
       for (const tag of tags) {
@@ -619,7 +619,7 @@ export function Analytics({
           details: []
         };
         current.realized = roundMoney(current.realized + position.realized_profit);
-        current.unrealized = roundMoney(current.unrealized + position.unrealized_profit);
+        current.unrealized = roundMoney(current.unrealized + position.estimated_profit);
         current.basisValue = roundMoney(current.basisValue + basisValue);
         current.count += 1;
         current.details.push({
@@ -746,14 +746,14 @@ export function Analytics({
         <div className="grid grid-cols-2 gap-3">
           <SmallCard
             label="最大獲利部位"
-            value={maxGainPosition ? currency(maxGainPosition.unrealized_profit) : "—"}
-            valueClass={maxGainPosition ? profitClass(maxGainPosition.unrealized_profit) : ""}
+            value={maxGainPosition ? currency(maxGainPosition.estimated_profit) : "—"}
+            valueClass={maxGainPosition ? profitClass(maxGainPosition.estimated_profit) : ""}
             hint={maxGainPosition ? `${maxGainPosition.symbol} ${maxGainPosition.name}` : "尚無資料"}
           />
           <SmallCard
             label="最大虧損部位"
-            value={maxLossPosition ? currency(maxLossPosition.unrealized_profit) : "—"}
-            valueClass={maxLossPosition ? profitClass(maxLossPosition.unrealized_profit) : ""}
+            value={maxLossPosition ? currency(maxLossPosition.estimated_profit) : "—"}
+            valueClass={maxLossPosition ? profitClass(maxLossPosition.estimated_profit) : ""}
             hint={maxLossPosition ? `${maxLossPosition.symbol} ${maxLossPosition.name}` : "尚無虧損部位"}
           />
         </div>
@@ -769,7 +769,7 @@ export function Analytics({
         onToggle={() => toggleCard("contribution")}
         summary={
           <div className="grid grid-cols-2 gap-2">
-            <MetricTile label="模式" value={profitMode === "realized" ? "已實現" : "未實現"} />
+            <MetricTile label="模式" value={profitMode === "realized" ? "已實現" : "預估"} />
             <MetricTile
               label="目前維度"
               value={contributionGroup === "stock" ? "股票" : contributionGroup === "industry" ? "產業" : "標籤"}
@@ -780,7 +780,7 @@ export function Analytics({
         <div className="space-y-3">
           <div className="rounded-md bg-paper p-1 text-sm">
             <button className={"rounded px-3 py-1.5 " + (profitMode === "unrealized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("unrealized")}>
-              未實現
+              預估
             </button>
             <button className={"rounded px-3 py-1.5 " + (profitMode === "realized" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setProfitMode("realized")}>
               已實現
@@ -912,8 +912,8 @@ export function Analytics({
                   <div className="grid grid-cols-2 gap-2">
                     <MetricTile label="持有股數" value={`${position.quantity} 股`} />
                     <MetricTile label="持有成本" value={currency(position.holding_cost)} />
-                    <MetricTile label="未實現損益" value={currency(position.unrealized_profit)} valueClass={profitClass(position.unrealized_profit)} />
-                    <MetricTile label="報酬率" value={percent(position.unrealized_return_rate)} valueClass={profitClass(position.unrealized_profit)} />
+                    <MetricTile label="預估損益" value={currency(position.estimated_profit)} valueClass={profitClass(position.estimated_profit)} />
+                    <MetricTile label="報酬率" value={percent(position.estimated_return_rate)} valueClass={profitClass(position.estimated_profit)} />
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-ink/55">
                     <span className="rounded-full bg-white px-2.5 py-1">{position.industry}</span>
@@ -1475,7 +1475,7 @@ function buildDetailLookup(
       quantityText: `${position.quantity} 股`,
       basisValue: getPositionBasisValue(position, basis),
       marketValue: position.market_value,
-      unrealizedProfit: position.unrealized_profit,
+      unrealizedProfit: position.estimated_profit,
       ratioOfGroup: groupBasisTotal > 0 ? getPositionBasisValue(position, basis) / groupBasisTotal : 0,
       ratioOfPortfolio: portfolioBasisTotal > 0 ? getPositionBasisValue(position, basis) / portfolioBasisTotal : 0
     }));
