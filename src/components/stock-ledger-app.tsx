@@ -24,7 +24,7 @@ import { findStockBySymbol, loadStockCatalog, type StockCatalogItem } from "@/li
 import { buildPortfolioUpdates, deleteTradeFromPortfolios, hasOversoldPosition, makeTrade, tradeCashImpact } from "@/lib/trade-ledger";
 import type { CashMovement, CashMovementType, Portfolio, PortfolioStockOverride, Position, PositionAdjustment, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
 import { Dashboard } from "@/components/stock-ledger/dashboard";
-import { ConfirmSheet, ListSection, Row } from "@/components/stock-ledger/ui";
+import { ConfirmSheet, ListSection, Row, SuccessSheet } from "@/components/stock-ledger/ui";
 import { Trades } from "@/components/stock-ledger/trades";
 import { Holdings } from "@/components/stock-ledger/holdings";
 import { Analytics } from "@/components/stock-ledger/analytics";
@@ -77,6 +77,7 @@ type CsvImportSummary = {
   importedCount: number;
   skipped: { line: number; reason: string; raw: string[] }[];
 };
+type SuccessState = { title: string; body: string } | null;
 type ConfirmState =
   | { kind: "deleteTrade"; trade: Trade }
   | { kind: "deletePortfolio"; portfolio: Portfolio }
@@ -268,6 +269,7 @@ export default function StockLedgerApp() {
   const [stockDraft, setStockDraft] = useState({ stockId: "", portfolioId: "", currentPrice: "", quantity: "", holdingCost: "", industry: "", tags: "" });
   const [stockAdjustBaseline, setStockAdjustBaseline] = useState({ quantity: 0, holdingCost: 0 });
   const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
+  const [successState, setSuccessState] = useState<SuccessState>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const backgroundSyncInFlightRef = useRef(false);
   const lastBackgroundSyncAtRef = useRef(0);
@@ -836,6 +838,11 @@ export default function StockLedgerApp() {
     setFormError("");
   }
 
+  function showSuccess(title: string, body: string) {
+    setMessage("");
+    setSuccessState({ title, body });
+  }
+
   function openSheet(mode: SheetMode) {
     clearInteractionMessages();
     setSheetMode(mode);
@@ -921,7 +928,7 @@ export default function StockLedgerApp() {
     setEditingPortfolioId(null);
     setPortfolioDraft({ name: "", initialAmount: "", note: "" });
     await reloadCloudDataAfterWrite();
-    setMessage(successMessage);
+    showSuccess(editingPortfolioId ? "更新成功" : "新增成功", successMessage);
     setSheetMode(null);
   }
 
@@ -952,7 +959,7 @@ export default function StockLedgerApp() {
     setPortfolios(remainingPortfolios);
     if (activePortfolioId === portfolio.id) setSelectedPortfolioId(remainingPortfolios[0]?.id ?? "");
     await reloadCloudDataAfterWrite();
-    setMessage("帳本已刪除。");
+    showSuccess("刪除成功", `帳本「${portfolio.name}」已刪除。`);
   }
 
   async function createCashMovement() {
@@ -1010,7 +1017,7 @@ export default function StockLedgerApp() {
 
     setCashDraft({ portfolioId: portfolio.id, type: "deposit", amount: "", note: "" });
     await reloadCloudDataAfterWrite();
-    setMessage("資金異動已儲存。");
+    showSuccess("儲存成功", "資金異動已儲存，帳本現金與累計金額已更新。");
     setSheetMode(null);
   }
 
@@ -1052,6 +1059,7 @@ export default function StockLedgerApp() {
     const portfolio = portfolios.find((item) => item.id === parsed.data.portfolioId);
     if (!portfolio) return setFormError("找不到帳本");
     const editingTrade = editingTradeId ? (trades.find((trade) => trade.id === editingTradeId) ?? null) : null;
+    const isEditingTrade = Boolean(editingTrade);
 
     const tradeCatalog = await getCatalogForSymbols([parsed.data.symbol]);
     const catalogStock = findStockBySymbol(tradeCatalog, parsed.data.symbol);
@@ -1194,13 +1202,15 @@ export default function StockLedgerApp() {
     setEditingTradeId(null);
     setTradeDraft({ ...emptyTradeDraft, portfolioId: portfolio.id });
     setFormError("");
-    const quoteResult = await refreshQuotesForStocks([stock], false);
-    setMessage(
-      quoteResult.updatedSymbols.length
-        ? `儲存成功，現價已更新：${formatSymbolList(quoteResult.updatedSymbols)}。`
-        : `儲存成功，但現價暫時未更新：${formatSymbolList(quoteResult.failedSymbols.length ? quoteResult.failedSymbols : [stock.symbol])}。`
-    );
     setSheetMode(null);
+    showSuccess(isEditingTrade ? "更新成功" : "儲存成功", "交易、現金、持股與損益已重新計算。現價會在背景更新，完成後會顯示更新結果。");
+    void refreshQuotesForStocks([stock], false).then((quoteResult) => {
+      setMessage(
+        quoteResult.updatedSymbols.length
+          ? `現價已更新：${formatSymbolList(quoteResult.updatedSymbols)}。`
+          : `交易已儲存，但現價暫時未更新：${formatSymbolList(quoteResult.failedSymbols.length ? quoteResult.failedSymbols : [stock.symbol])}。`
+      );
+    });
   }
 
   async function deleteTrade(trade: Trade) {
@@ -1235,7 +1245,7 @@ export default function StockLedgerApp() {
     setPortfolios((current) => current.map((item) => (item.id === nextPortfolio.id ? nextPortfolio : item)));
     setFormError("");
     await reloadCloudDataAfterWrite();
-    setMessage("交易已刪除。");
+    showSuccess("刪除成功", "交易已刪除，帳本現金、持股與損益已重新計算。");
   }
 
   function requestDeleteTrade(trade: Trade) {
@@ -1362,19 +1372,19 @@ export default function StockLedgerApp() {
     });
     setStockTags((current) => [...current.filter((item) => !(item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)), ...tagRows]);
     await reloadCloudDataAfterWrite();
-    setMessage(supabase && hasSupabaseEnv ? "成本校正已更新。" : "成本校正已更新。");
+    showSuccess("更新成功", "成本校正已更新，持股股數、成本、產業別與標籤已重新整理。");
     setConfirmState(null);
     setSheetMode(null);
   }
 
   async function updateSettings() {
     if (!supabase || !hasSupabaseEnv || !userId) {
-      setMessage("設定已儲存。");
+      showSuccess("儲存成功", "設定已儲存，後續交易會依目前費率重新計算。");
       return setSheetMode(null);
     }
     const { error } = await supabase.from("settings").upsert(settings);
     if (error) return setFormError(toUserError(error, "儲存設定失敗。"));
-    setMessage("設定已儲存。");
+    showSuccess("儲存成功", "設定已儲存，後續交易會依目前費率重新計算。");
     setSheetMode(null);
   }
 
@@ -1405,7 +1415,7 @@ export default function StockLedgerApp() {
     link.download = "stock-ledger-backup-" + today() + ".json";
     link.click();
     URL.revokeObjectURL(url);
-    setMessage("JSON 備份已匯出。");
+    showSuccess("匯出成功", "JSON 備份已匯出。");
   }
 
   async function importJsonBackup(file: File) {
@@ -1599,12 +1609,14 @@ export default function StockLedgerApp() {
         skipped
       });
       await reloadCloudDataAfterWrite();
-      setMessage(
-        "匯入成功：新增 " +
+      showSuccess(
+        "匯入成功",
+        "新增 " +
           importedCount +
-          "、略過 " +
+          " 筆、略過 " +
           skipped.length +
-          (reasonBuckets.length ? "。主因：" + reasonBuckets.map((item) => item.label + " " + item.count).join("、") : "")
+          " 筆" +
+          (reasonBuckets.length ? "。主因：" + reasonBuckets.map((item) => item.label + " " + item.count).join("、") : "。")
       );
     } catch (error) {
       console.error("Failed to import CSV", error);
@@ -1792,7 +1804,7 @@ export default function StockLedgerApp() {
       setPortfolioStockOverrides(nextPortfolioStockOverrides);
       setStockTags(nextTags);
       await reloadCloudDataAfterWrite();
-      setMessage("持股匯入成功：更新 " + affectedPairs.size + " 筆持股、略過 " + skipped.length + " 筆。");
+      showSuccess("匯入成功", "更新 " + affectedPairs.size + " 筆持股、略過 " + skipped.length + " 筆。");
     } catch (error) {
       console.error("Failed to import holdings CSV", error);
       setFormError("持股 CSV 解析失敗，請確認格式與欄位。");
@@ -1821,7 +1833,7 @@ export default function StockLedgerApp() {
     if (typeof window !== "undefined") window.localStorage.removeItem(LOCAL_STORAGE_KEY);
     setSelectedPortfolioId("");
     seedDemoData();
-    setMessage("已重置成本機 demo 資料。");
+    showSuccess("重置成功", "已重置成本機 demo 資料。");
     setSheetMode(null);
   }
 
@@ -2140,7 +2152,7 @@ export default function StockLedgerApp() {
             setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
             setSelectedPortfolioId(snapshot.portfolios[0]?.id ?? "");
             setConfirmState(null);
-            setMessage("備份已匯入。");
+            showSuccess("匯入成功", "JSON 備份已匯入。");
             setSheetMode(null);
           }}
         />
@@ -2154,6 +2166,14 @@ export default function StockLedgerApp() {
           tone="primary"
           onCancel={() => setConfirmState(null)}
           onConfirm={() => void updateStockAdjustment(confirmState.parsed)}
+        />
+      )}
+
+      {successState && (
+        <SuccessSheet
+          title={successState.title}
+          body={successState.body}
+          onClose={() => setSuccessState(null)}
         />
       )}
     </main>

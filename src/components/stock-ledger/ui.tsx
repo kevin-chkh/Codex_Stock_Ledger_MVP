@@ -250,3 +250,26 @@ export function ConfirmSheet({
     </div>
   );
 }
+
+export function SuccessSheet({
+  title,
+  body,
+  onClose
+}: {
+  title: string;
+  body: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-ink/35" onClick={onClose}>
+      <section className="mx-auto w-full max-w-2xl rounded-t-xl bg-white p-4 shadow-soft" onClick={(event) => event.stopPropagation()}>
+        <div className="mx-auto h-1.5 w-10 rounded-full bg-ink/10" />
+        <h2 className="mt-4 text-lg font-bold text-ink">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-ink/65">{body}</p>
+        <button className="mt-4 w-full rounded-md bg-mint px-4 py-3 font-semibold text-white" onClick={onClose}>
+          知道了
+        </button>
+      </section>
+    </div>
+  );
+}

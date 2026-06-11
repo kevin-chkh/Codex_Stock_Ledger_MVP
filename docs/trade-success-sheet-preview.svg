@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1280" viewBox="0 0 900 1280">
+  <rect width="900" height="1280" fill="#eeeae2"/>
+  <rect x="90" y="0" width="720" height="1280" fill="#f8f5ee"/>
+  <text x="125" y="58" fill="#2d8a73" font-family="Arial, sans-serif" font-size="18" font-weight="700">Stock Ledger</text>
+  <text x="125" y="92" fill="#17211f" font-family="Arial, sans-serif" font-size="28" font-weight="800">股票交易帳本</text>
+  <rect x="125" y="132" width="650" height="330" rx="12" fill="#14211f"/>
+  <text x="150" y="174" fill="#9eb3ad" font-family="Arial, sans-serif" font-size="18">總資產</text>
+  <text x="150" y="220" fill="#ffffff" font-family="Arial, sans-serif" font-size="46" font-weight="800">$413,431</text>
+  <text x="150" y="280" fill="#9eb3ad" font-family="Arial, sans-serif" font-size="17">總損益</text>
+  <text x="150" y="317" fill="#ff7a67" font-family="Arial, sans-serif" font-size="28" font-weight="800">$113,431</text>
+  <text x="455" y="280" fill="#9eb3ad" font-family="Arial, sans-serif" font-size="17">總報酬率</text>
+  <text x="455" y="317" fill="#ff7a67" font-family="Arial, sans-serif" font-size="28" font-weight="800">37.81%</text>
+  <rect x="125" y="500" width="650" height="108" rx="12" fill="#ffffff"/>
+  <text x="150" y="545" fill="#17211f" font-family="Arial, sans-serif" font-size="23" font-weight="800">最近交易</text>
+  <text x="150" y="585" fill="#17211f" font-family="Arial, sans-serif" font-size="19" font-weight="700">買入 2330 台積電</text>
+  <text x="690" y="585" fill="#17211f" font-family="Arial, sans-serif" font-size="19" font-weight="800" text-anchor="end">$92,131</text>
+
+  <rect width="900" height="1280" fill="#17211f" opacity=".38"/>
+  <rect x="90" y="800" width="720" height="480" rx="28" fill="#ffffff"/>
+  <rect x="410" y="822" width="80" height="10" rx="5" fill="#17211f" opacity=".12"/>
+  <circle cx="450" cy="910" r="46" fill="#2d8a73" opacity=".13"/>
+  <path d="M430 910l14 14 30-34" fill="none" stroke="#2d8a73" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="450" y="1010" fill="#17211f" font-family="Arial, sans-serif" font-size="32" font-weight="800" text-anchor="middle">儲存成功</text>
+  <text x="450" y="1062" fill="#66736f" font-family="Arial, sans-serif" font-size="20" text-anchor="middle">交易、現金、持股與損益已重新計算。</text>
+  <text x="450" y="1098" fill="#66736f" font-family="Arial, sans-serif" font-size="20" text-anchor="middle">現價會在背景更新，完成後會顯示更新結果。</text>
+  <rect x="130" y="1160" width="640" height="64" rx="10" fill="#2d8a73"/>
+  <text x="450" y="1201" fill="#ffffff" font-family="Arial, sans-serif" font-size="21" font-weight="800" text-anchor="middle">知道了</text>
+</svg>
