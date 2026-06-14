@@ -458,4 +458,47 @@ describe("calculateDashboardMetrics", () => {
     expect(metrics.unrealizedProfit).toBe(932.89);
     expect(metrics.realizedProfit).toBe(1200);
   });
+
+  it("sums total assets across multiple portfolios", () => {
+    const portfolios: Portfolio[] = [
+      {
+        id: "portfolio-1",
+        user_id: "user-1",
+        name: "帳本 A",
+        currency: "TWD",
+        initial_amount: 100000,
+        cash_balance: 50000,
+        total_deposits: 100000,
+        total_withdrawals: 0,
+        note: null,
+        created_at: "",
+        updated_at: ""
+      },
+      {
+        id: "portfolio-2",
+        user_id: "user-1",
+        name: "帳本 B",
+        currency: "TWD",
+        initial_amount: 50000,
+        cash_balance: 20000,
+        total_deposits: 50000,
+        total_withdrawals: 0,
+        note: null,
+        created_at: "",
+        updated_at: ""
+      }
+    ];
+    const positions = buildPositions(
+      [
+        trade({ id: "trade-1", portfolio_id: "portfolio-1", quantity: 100, net_amount: 10020 }),
+        trade({ id: "trade-2", portfolio_id: "portfolio-2", quantity: 50, unit_price: 200, gross_amount: 10000, net_amount: 10020 })
+      ],
+      [stock]
+    );
+    const metrics = calculateDashboardMetrics(portfolios, positions);
+
+    expect(metrics.cash).toBe(70000);
+    expect(metrics.holdingsValue).toBe(16500);
+    expect(metrics.totalAssets).toBe(86500);
+  });
 });

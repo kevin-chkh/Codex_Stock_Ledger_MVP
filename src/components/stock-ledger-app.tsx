@@ -93,6 +93,7 @@ type ConfirmState =
 
 const LOCAL_STORAGE_KEY = "stock-ledger-local-v1";
 const PORTFOLIO_SCOPE_STORAGE_KEY = "stock-ledger-selected-portfolio-scope-v1";
+const HOLDINGS_INCLUDE_CLOSED_STORAGE_KEY = "stock-ledger-holdings-include-closed-v1";
 const DEMO_BANNER_DISMISSED_KEY = "stock-ledger-demo-banner-dismissed-v1";
 const CLOSE_QUOTE_REFRESH_DATE_KEY = "stock-ledger-close-quote-refresh-date-v1";
 const BACKGROUND_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -272,7 +273,8 @@ export default function StockLedgerApp() {
   const [formError, setFormError] = useState("");
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   const [editingPortfolioId, setEditingPortfolioId] = useState<string | null>(null);
-  const [selectedPortfolioId, setSelectedPortfolioId] = useState("");
+  const [selectedPortfolioId, setSelectedPortfolioId] = useState<"all" | string>("all");
+  const [includeClosedHoldings, setIncludeClosedHoldings] = useState(false);
   const [demoBannerDismissed, setDemoBannerDismissed] = useState(false);
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(emptyTradeDraft);
   const [portfolioDraft, setPortfolioDraft] = useState({ name: "", initialAmount: "", note: "" });
@@ -310,13 +312,26 @@ export default function StockLedgerApp() {
     return timestamps.reduce((latest, current) => (new Date(current).getTime() > new Date(latest).getTime() ? current : latest));
   }, [effectiveStocks]);
   const activePortfolioId = useMemo(() => {
+    if (selectedPortfolioId === "all") return "all";
     if (selectedPortfolioId && portfolios.some((portfolio) => portfolio.id === selectedPortfolioId)) return selectedPortfolioId;
-    return portfolios[0]?.id || "";
+    return "all";
   }, [portfolios, selectedPortfolioId]);
-  const scopedPortfolios = useMemo(() => portfolios.filter((portfolio) => portfolio.id === activePortfolioId), [activePortfolioId, portfolios]);
-  const scopedPositions = useMemo(() => positions.filter((position) => position.portfolio_id === activePortfolioId), [activePortfolioId, positions]);
-  const scopedTrades = useMemo(() => trades.filter((trade) => trade.portfolio_id === activePortfolioId), [activePortfolioId, trades]);
-  const defaultTradePortfolioId = useMemo(() => activePortfolioId || portfolios[0]?.id || "", [activePortfolioId, portfolios]);
+  const scopedPortfolios = useMemo(
+    () => (activePortfolioId === "all" ? portfolios : portfolios.filter((portfolio) => portfolio.id === activePortfolioId)),
+    [activePortfolioId, portfolios]
+  );
+  const scopedPositions = useMemo(
+    () => (activePortfolioId === "all" ? positions : positions.filter((position) => position.portfolio_id === activePortfolioId)),
+    [activePortfolioId, positions]
+  );
+  const scopedTrades = useMemo(
+    () => (activePortfolioId === "all" ? trades : trades.filter((trade) => trade.portfolio_id === activePortfolioId)),
+    [activePortfolioId, trades]
+  );
+  const defaultTradePortfolioId = useMemo(
+    () => (activePortfolioId !== "all" ? activePortfolioId : portfolios[0]?.id || ""),
+    [activePortfolioId, portfolios]
+  );
   const metrics = useMemo(() => calculateDashboardMetrics(scopedPortfolios, scopedPositions), [scopedPortfolios, scopedPositions]);
   const catalogSourceLabel = catalogSource === "api" ? "API" : catalogSource === "cache" ? "本地快取" : "fallback";
   const quoteStatusLabel = isTaiwanMarketHours() ? "盤中自動更新" : isTaiwanAfterCloseRefreshTime() ? "收盤後更新" : "收盤價";
@@ -329,6 +344,7 @@ export default function StockLedgerApp() {
     if (typeof window === "undefined") return;
     const storedScope = window.localStorage.getItem(PORTFOLIO_SCOPE_STORAGE_KEY);
     if (storedScope) setSelectedPortfolioId(storedScope);
+    setIncludeClosedHoldings(window.localStorage.getItem(HOLDINGS_INCLUDE_CLOSED_STORAGE_KEY) === "1");
     setDemoBannerDismissed(window.localStorage.getItem(DEMO_BANNER_DISMISSED_KEY) === "1");
   }, []);
 
@@ -338,12 +354,17 @@ export default function StockLedgerApp() {
   }, [selectedPortfolioId]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(HOLDINGS_INCLUDE_CLOSED_STORAGE_KEY, includeClosedHoldings ? "1" : "0");
+  }, [includeClosedHoldings]);
+
+  useEffect(() => {
     if (!portfolios.length) {
-      if (selectedPortfolioId) setSelectedPortfolioId("");
+      if (selectedPortfolioId !== "all") setSelectedPortfolioId("all");
       return;
     }
-    if (!selectedPortfolioId || !portfolios.some((portfolio) => portfolio.id === selectedPortfolioId)) {
-      setSelectedPortfolioId(portfolios[0].id);
+    if (selectedPortfolioId !== "all" && !portfolios.some((portfolio) => portfolio.id === selectedPortfolioId)) {
+      setSelectedPortfolioId("all");
     }
   }, [portfolios, selectedPortfolioId]);
 
@@ -891,7 +912,7 @@ export default function StockLedgerApp() {
 
   function openCashForPortfolio(portfolioId?: string) {
     setCashDraft({
-      portfolioId: portfolioId || activePortfolioId || portfolios[0]?.id || "",
+      portfolioId: portfolioId || (activePortfolioId !== "all" ? activePortfolioId : portfolios[0]?.id || ""),
       type: "deposit",
       amount: "",
       note: ""
@@ -947,7 +968,6 @@ export default function StockLedgerApp() {
         if (error) return setFormError(toUserError(error, "新增帳本失敗。"));
       }
       setPortfolios((current) => [...current, item]);
-      if (!selectedPortfolioId) setSelectedPortfolioId(id);
       successMessage = "帳本已新增。";
     }
 
@@ -984,7 +1004,7 @@ export default function StockLedgerApp() {
     setPositionAdjustments((current) => current.filter((item) => item.portfolio_id !== portfolio.id));
     const remainingPortfolios = portfolios.filter((item) => item.id !== portfolio.id);
     setPortfolios(remainingPortfolios);
-    if (activePortfolioId === portfolio.id) setSelectedPortfolioId(remainingPortfolios[0]?.id ?? "");
+    if (activePortfolioId === portfolio.id) setSelectedPortfolioId("all");
     await reloadCloudDataAfterWrite();
     showSuccess("刪除成功", `帳本「${portfolio.name}」已刪除。`);
   }
@@ -1872,7 +1892,7 @@ export default function StockLedgerApp() {
     const confirmed = window.confirm("確定要清除本機資料並重新載入 demo？此動作不會影響 Supabase。");
     if (!confirmed) return;
     if (typeof window !== "undefined") window.localStorage.removeItem(LOCAL_STORAGE_KEY);
-    setSelectedPortfolioId("");
+    setSelectedPortfolioId("all");
     seedDemoData();
     showSuccess("重置成功", "已重置成本機 demo 資料。");
     setSheetMode(null);
@@ -1989,6 +2009,7 @@ export default function StockLedgerApp() {
             stocks={stocks}
             portfolios={portfolios}
             importSummary={csvImportSummary}
+            showPortfolioFilter={activePortfolioId === "all"}
             onEdit={openEditTrade}
             onDelete={requestDeleteTrade}
             onImportCsv={requestImportTradesCsv}
@@ -1999,6 +2020,8 @@ export default function StockLedgerApp() {
             positions={scopedPositions}
             portfolios={portfolios}
             selectedPortfolioId={activePortfolioId}
+            includeClosed={includeClosedHoldings}
+            onIncludeClosedChange={setIncludeClosedHoldings}
             onPortfolioChange={setSelectedPortfolioId}
             onAdjustCost={openStockAdjustEditor}
             onImportCsv={requestImportHoldingsCsv}
@@ -2191,7 +2214,7 @@ export default function StockLedgerApp() {
             setPortfolioStockOverrides(snapshot.portfolioStockOverrides ?? []);
             setTrades(snapshot.trades.map(normalizeTrade));
             setPositionAdjustments((snapshot.positionAdjustments ?? []).map(normalizePositionAdjustment));
-            setSelectedPortfolioId(snapshot.portfolios[0]?.id ?? "");
+            setSelectedPortfolioId("all");
             setConfirmState(null);
             showSuccess("匯入成功", "JSON 備份已匯入。");
             setSheetMode(null);

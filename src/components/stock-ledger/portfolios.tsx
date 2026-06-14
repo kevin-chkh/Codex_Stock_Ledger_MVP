@@ -30,7 +30,10 @@ export function Portfolios({
       </section>
       <ListSection title={`帳本 ${portfolios.length} 本`} empty="尚無帳本">
         {portfolios.map((portfolio) => {
-          const movementCount = cashMovements.filter((movement) => movement.portfolio_id === portfolio.id).length;
+          const portfolioMovements = cashMovements
+            .filter((movement) => movement.portfolio_id === portfolio.id)
+            .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime());
+          const movementCount = portfolioMovements.length;
           const isDefault = selectedPortfolioId === portfolio.id;
           return (
             <article key={portfolio.id} className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
@@ -77,10 +80,59 @@ export function Portfolios({
                   <p className="mt-1 font-bold">{currency(portfolio.initial_amount)}</p>
                 </div>
               </div>
+              {portfolioMovements.length > 0 ? (
+                <div className="mt-4 rounded-lg border border-ink/10 bg-paper/45 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold">資金異動紀錄</p>
+                    <p className="text-xs text-ink/45">最近 {Math.min(3, portfolioMovements.length)} 筆</p>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {portfolioMovements.slice(0, 3).map((movement) => (
+                      <div key={movement.id} className="rounded-md bg-white px-3 py-2 text-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold">{movementTypeLabel(movement.type)}</p>
+                            <p className="mt-1 text-xs text-ink/45">{movement.occurred_at}</p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <p className={"font-bold " + movementToneClass(movement.type)}>
+                              {movementAmountPrefix(movement.type)}
+                              {currency(movement.amount)}
+                            </p>
+                            <p className="mt-1 text-xs text-ink/45">餘額 {currency(movement.balance_after)}</p>
+                          </div>
+                        </div>
+                        {movement.note ? <p className="mt-2 break-words rounded-md bg-paper px-2 py-1.5 text-xs text-ink/65">{movement.note}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                  {portfolioMovements.length > 3 ? (
+                    <p className="mt-2 text-xs text-ink/45">另有 {portfolioMovements.length - 3} 筆較早紀錄。</p>
+                  ) : null}
+                </div>
+              ) : null}
             </article>
           );
         })}
       </ListSection>
     </div>
   );
+}
+
+function movementTypeLabel(type: CashMovement["type"]) {
+  if (type === "deposit") return "加入金額";
+  if (type === "withdraw") return "轉出金額";
+  return "金額修正";
+}
+
+function movementAmountPrefix(type: CashMovement["type"]) {
+  if (type === "deposit") return "+";
+  if (type === "withdraw") return "-";
+  return "";
+}
+
+function movementToneClass(type: CashMovement["type"]) {
+  if (type === "deposit") return "text-coral";
+  if (type === "withdraw") return "text-mint";
+  return "text-ink";
 }

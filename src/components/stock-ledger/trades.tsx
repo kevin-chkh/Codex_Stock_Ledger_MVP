@@ -1,5 +1,5 @@
 import { Download, Pencil, Search, Trash2, Upload } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { compareTradesChronologically, roundMoney } from "@/lib/calculations";
 import { currency, profitClass } from "@/lib/format";
 import type { Portfolio, Stock, Trade, TradeType } from "@/lib/types";
@@ -16,6 +16,7 @@ export function Trades({
   stocks,
   portfolios,
   importSummary,
+  showPortfolioFilter = true,
   onEdit,
   onDelete,
   onImportCsv
@@ -24,6 +25,7 @@ export function Trades({
   stocks: Stock[];
   portfolios: Portfolio[];
   importSummary: CsvImportSummary | null;
+  showPortfolioFilter?: boolean;
   onEdit: (trade: Trade) => void;
   onDelete: (trade: Trade) => void;
   onImportCsv: (file: File) => void;
@@ -35,6 +37,11 @@ export function Trades({
   const stockMap = useMemo(() => new Map(stocks.map((stock) => [stock.id, stock])), [stocks]);
   const portfolioMap = useMemo(() => new Map(portfolios.map((portfolio) => [portfolio.id, portfolio.name])), [portfolios]);
   const realizedByTradeId = useMemo(() => buildRealizedTradeMap(trades), [trades]);
+
+  useEffect(() => {
+    if (!showPortfolioFilter && portfolioFilter !== "all") setPortfolioFilter("all");
+  }, [portfolioFilter, showPortfolioFilter]);
+
   const filteredTrades = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return [...trades]
@@ -47,7 +54,7 @@ export function Trades({
           .toLowerCase();
 
         if (typeFilter !== "all" && trade.type !== typeFilter) return false;
-        if (portfolioFilter !== "all" && trade.portfolio_id !== portfolioFilter) return false;
+        if (showPortfolioFilter && portfolioFilter !== "all" && trade.portfolio_id !== portfolioFilter) return false;
         if (normalizedQuery && !searchable.includes(normalizedQuery)) return false;
         return true;
       })
@@ -56,7 +63,7 @@ export function Trades({
         if (sortBy === "amountDesc") return b.net_amount - a.net_amount;
         return new Date(b.traded_at).getTime() - new Date(a.traded_at).getTime();
       });
-  }, [portfolioFilter, portfolioMap, query, sortBy, stockMap, trades, typeFilter]);
+  }, [portfolioFilter, portfolioMap, query, showPortfolioFilter, sortBy, stockMap, trades, typeFilter]);
 
   return (
     <div className="space-y-4">
@@ -80,18 +87,20 @@ export function Trades({
             <option value="buy">只看買入</option>
             <option value="sell">只看賣出</option>
           </select>
-          <select
-            className="rounded-md border border-ink/15 bg-white px-3 py-2 text-sm outline-none focus:border-mint"
-            value={portfolioFilter}
-            onChange={(event) => setPortfolioFilter(event.target.value)}
-          >
-            <option value="all">全部帳本</option>
-            {portfolios.map((portfolio) => (
-              <option key={portfolio.id} value={portfolio.id}>
-                {portfolio.name}
-              </option>
-            ))}
-          </select>
+          {showPortfolioFilter ? (
+            <select
+              className="rounded-md border border-ink/15 bg-white px-3 py-2 text-sm outline-none focus:border-mint"
+              value={portfolioFilter}
+              onChange={(event) => setPortfolioFilter(event.target.value)}
+            >
+              <option value="all">全部帳本</option>
+              {portfolios.map((portfolio) => (
+                <option key={portfolio.id} value={portfolio.id}>
+                  {portfolio.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <select
             className="rounded-md border border-ink/15 bg-white px-3 py-2 text-sm outline-none focus:border-mint"
             value={sortBy}

@@ -8,6 +8,8 @@ export function Holdings({
   positions,
   portfolios,
   selectedPortfolioId,
+  includeClosed,
+  onIncludeClosedChange,
   onPortfolioChange,
   onAdjustCost,
   onImportCsv
@@ -15,12 +17,17 @@ export function Holdings({
   positions: Position[];
   portfolios: Portfolio[];
   selectedPortfolioId: string;
+  includeClosed: boolean;
+  onIncludeClosedChange: (includeClosed: boolean) => void;
   onPortfolioChange: (portfolioId: string) => void;
   onAdjustCost: (position: Position) => void;
   onImportCsv: (file: File) => void;
 }) {
   const openPositions = useMemo(() => positions.filter((position) => position.quantity > 0), [positions]);
-  const [includeClosed, setIncludeClosed] = useState(false);
+  const closedCount = useMemo(
+    () => positions.filter((position) => position.quantity === 0 && position.realized_profit !== 0).length,
+    [positions]
+  );
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("all");
   const [industryFilter, setIndustryFilter] = useState("all");
@@ -87,7 +94,7 @@ export function Holdings({
             label="目前："
             value={selectedPortfolioId}
             onChange={onPortfolioChange}
-            options={portfolios.map((portfolio) => [portfolio.id, portfolio.name])}
+            options={[["all", "全部帳本"], ...portfolios.map((portfolio) => [portfolio.id, portfolio.name])]}
           />
           <div className="relative">
             <button
@@ -175,10 +182,28 @@ export function Holdings({
             type="checkbox"
             className="h-4 w-4 accent-mint"
             checked={includeClosed}
-            onChange={(event) => setIncludeClosed(event.target.checked)}
+            onChange={(event) => onIncludeClosedChange(event.target.checked)}
           />
         </label>
       </section>
+
+      {closedCount > 0 && !includeClosed ? (
+        <section className="rounded-lg border border-mint/20 bg-mint/10 px-4 py-3 shadow-soft">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-ink">你有 {closedCount} 檔已清倉標的</p>
+              <p className="mt-1 text-xs text-ink/55">已清倉標的仍保留已實現損益紀錄。</p>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 rounded-md bg-ink px-3 py-2 text-sm font-semibold text-white"
+              onClick={() => onIncludeClosedChange(true)}
+            >
+              顯示
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-lg border border-ink/10 bg-white px-4 py-3 shadow-soft">
         <div className="flex items-center justify-between gap-3">

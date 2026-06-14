@@ -108,6 +108,9 @@ export function Dashboard({
               value={selectedPortfolioId}
               onChange={(event) => onPortfolioChange(event.target.value)}
             >
+              <option className="text-ink" value="all">
+                全部帳本
+              </option>
               {portfolios.map((portfolio) => (
                 <option className="text-ink" key={portfolio.id} value={portfolio.id}>
                   {portfolio.name}
