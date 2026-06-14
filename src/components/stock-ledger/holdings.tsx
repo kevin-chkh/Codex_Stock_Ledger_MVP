@@ -402,23 +402,30 @@ function ExpandedHoldingCard({
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3">
-        <div className="rounded-lg bg-white px-4 py-4">
-          <p className="text-[11px] text-ink/45">帳面損益</p>
-          <p className={"mt-2 text-lg font-semibold " + profitClass(position.book_profit)}>{currency(position.book_profit)}</p>
-        </div>
+      <div className="mt-3">
         <div className="rounded-lg bg-white px-4 py-4">
           <div className="flex items-center gap-1">
             <p className="text-[11px] text-ink/45">預估損益</p>
             <InfoTip label="預估損益說明" body={["預估損益已扣除賣出手續費與證交稅。", "報酬率使用預估損益除以目前庫存的累積買進成本。"]} />
           </div>
-          <p className={"mt-2 text-lg font-semibold " + profitClass(position.estimated_profit)}>{currency(position.estimated_profit)}</p>
+          <p className={"mt-2 text-2xl font-bold " + profitClass(position.estimated_profit)}>{currency(position.estimated_profit)}</p>
         </div>
       </div>
 
-      <div className="mt-3 rounded-lg bg-white px-4 py-3 text-xs text-ink/55">
-        預估賣出成本：手續費 {currency(position.estimated_sell_fee)} · 證交稅 {currency(position.estimated_sell_tax)}
-      </div>
+      <details className="mt-3 rounded-lg border border-ink/10 bg-white px-4 py-3 text-sm">
+        <summary className="cursor-pointer select-none font-semibold text-ink/70">進階：帳面損益與預估賣出成本</summary>
+        <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+          <div className="rounded-md bg-paper px-3 py-3">
+            <p className="text-ink/45">帳面損益</p>
+            <p className={"mt-1 text-base font-semibold " + profitClass(position.book_profit)}>{currency(position.book_profit)}</p>
+          </div>
+          <div className="rounded-md bg-paper px-3 py-3">
+            <p className="text-ink/45">預估賣出成本</p>
+            <p className="mt-1 font-semibold">手續費 {currency(position.estimated_sell_fee)}</p>
+            <p className="mt-1 font-semibold">交易稅 {currency(position.estimated_sell_tax)}</p>
+          </div>
+        </div>
+      </details>
 
       {position.realized_profit !== 0 ? (
         <p className={"mt-3 text-sm " + profitClass(position.realized_profit)}>

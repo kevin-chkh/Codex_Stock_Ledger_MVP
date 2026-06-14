@@ -244,7 +244,7 @@ export function TradeForm({
       {draft.buyMode === "totalAmount" ? (
         <>
           <Field
-            label={draft.type === "buy" ? "買入總成本(含手續費)" : "賣出金額"}
+            label={draft.type === "buy" ? "買入總成本" : "賣出金額"}
             type="text"
             inputMode="decimal"
             value={formatThousandsInput(draft.totalAmount)}
@@ -508,6 +508,23 @@ export function SettingsForm({
       <section className="rounded-lg border border-ink/10 bg-paper px-3 py-3 text-sm text-ink/70">
         <p className="font-semibold text-ink">顏色說明</p>
         <p className="mt-1">紅色表示獲利、綠色表示虧損。</p>
+      </section>
+      <section className="rounded-lg border border-ink/10 bg-paper px-3 py-3 text-sm text-ink/70">
+        <p className="font-semibold text-ink">損益名詞對照</p>
+        <div className="mt-3 space-y-3">
+          <div>
+            <p className="font-semibold text-ink/80">預估損益</p>
+            <p className="mt-1 leading-5">市值扣除預估賣出手續費、交易稅與持有成本，較接近實際賣出後可落袋金額。</p>
+          </div>
+          <div>
+            <p className="font-semibold text-ink/80">帳面損益</p>
+            <p className="mt-1 leading-5">市值減持有成本，尚未扣除未來賣出手續費與交易稅，適合用來對照券商常見帳面數字。</p>
+          </div>
+          <div>
+            <p className="font-semibold text-ink/80">報酬率</p>
+            <p className="mt-1 leading-5">預設以預估損益除以目前庫存的累積買進成本計算。</p>
+          </div>
+        </div>
       </section>
       <label className="flex items-center justify-between rounded-lg border border-ink/10 p-3">
         <span>允許現金為負</span>

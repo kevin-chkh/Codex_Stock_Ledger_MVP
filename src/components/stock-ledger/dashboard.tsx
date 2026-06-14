@@ -110,6 +110,9 @@ export function Dashboard({
             <Metric label="總損益" value={currency(metrics.totalProfit)} strong className={metrics.totalProfit >= 0 ? "text-red-200" : "text-emerald-200"} />
             <Metric label="總報酬率" value={percent(metrics.totalReturnRate)} strong className={metrics.totalReturnRate >= 0 ? "text-red-200" : "text-emerald-200"} />
           </div>
+          <p className="mt-3 rounded-md bg-white/5 px-3 py-2 text-xs leading-5 text-white/65">
+            預估損益已扣除賣出手續費與交易稅，較接近實際可落袋金額。
+          </p>
         </div>
         <div className="grid grid-cols-2 gap-px bg-white/10">
           <div className="bg-ink px-5 py-4 text-white">
