@@ -80,6 +80,23 @@ describe("calculateTradeAmounts", () => {
     });
   });
 
+  it("preserves entered net amount when sell total already includes fee and tax", () => {
+    expect(
+      calculateTradeAmounts({
+        type: "sell",
+        quantity: 2000,
+        unitPrice: 13.44,
+        settings: DEFAULT_SETTINGS,
+        netAmountOverride: 26756
+      })
+    ).toEqual({
+      grossAmount: 26880,
+      fee: 34.47,
+      tax: 80.64,
+      netAmount: 26756
+    });
+  });
+
   it("derives buy unit price from total amount including fee", () => {
     expect(
       resolveUnitPriceFromTotalAmount({

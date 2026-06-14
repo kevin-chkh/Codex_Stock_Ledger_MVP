@@ -28,11 +28,13 @@ export function calculateTradeAmounts(input: {
   settings: Pick<UserSettings, "fee_rate" | "tax_rate" | "minimum_fee">;
   feeOverride?: number;
   taxOverride?: number;
+  netAmountOverride?: number;
 }) {
   const grossAmount = roundMoney(input.quantity * input.unitPrice);
   const fee = input.feeOverride ?? calculateFee(grossAmount, input.settings);
   const tax = input.taxOverride ?? calculateTax(grossAmount, input.type, input.settings);
-  const netAmount = input.type === "buy" ? roundMoney(grossAmount + fee) : roundMoney(grossAmount - fee - tax);
+  const calculatedNetAmount = input.type === "buy" ? roundMoney(grossAmount + fee) : roundMoney(grossAmount - fee - tax);
+  const netAmount = input.netAmountOverride === undefined ? calculatedNetAmount : roundMoney(input.netAmountOverride);
 
   return { grossAmount, fee, tax, netAmount };
 }
@@ -61,7 +63,7 @@ export function resolveUnitPriceFromTotalAmount(input: {
       grossAmount = nextGrossAmount;
     }
 
-    return roundMoney(grossAmount / input.quantity);
+    return Math.round((grossAmount / input.quantity + Number.EPSILON) * 10000) / 10000;
   }
 
   let grossAmount = roundMoney(input.totalAmount);
@@ -75,7 +77,7 @@ export function resolveUnitPriceFromTotalAmount(input: {
     grossAmount = nextGrossAmount;
   }
 
-  return roundMoney(grossAmount / input.quantity);
+  return Math.round((grossAmount / input.quantity + Number.EPSILON) * 10000) / 10000;
 }
 
 export function compareTradesChronologically(a: Trade, b: Trade) {

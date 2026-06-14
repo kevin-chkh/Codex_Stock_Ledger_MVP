@@ -62,6 +62,25 @@ describe("trade ledger integration", () => {
     expect(updated.updated_at).toBe("2026-01-02T00:00:00.000Z");
   });
 
+  it("keeps broker-entered sell net amount exact when provided", () => {
+    const sell = makeTrade({
+      id: "sell-net-1",
+      userId: "user-1",
+      portfolioId: "portfolio-1",
+      stockId: "stock-1",
+      type: "sell",
+      quantity: 2000,
+      unitPrice: 13.44,
+      settings: DEFAULT_SETTINGS,
+      tradedAt: "2026-01-01",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      netAmountOverride: 26756
+    });
+
+    expect(sell.gross_amount).toBe(26880);
+    expect(sell.net_amount).toBe(26756);
+  });
+
   it("edits a buy trade and applies only the cash delta", () => {
     const original = trade({ id: "buy-1", net_amount: 10020 });
     const edited = trade({ id: "buy-1", net_amount: 12020, gross_amount: 12000, unit_price: 120 });

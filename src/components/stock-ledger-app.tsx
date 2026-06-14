@@ -1035,13 +1035,14 @@ export default function StockLedgerApp() {
 
   async function saveTrade() {
     clearInteractionMessages();
+    const enteredTotalAmount = parseNumericInput(tradeDraft.totalAmount || "0");
     const derivedUnitPrice =
       tradeDraft.buyMode === "totalAmount"
         ? Number(tradeDraft.quantity || 0) > 0
           ? resolveUnitPriceFromTotalAmount({
               type: tradeDraft.type,
               quantity: Number(tradeDraft.quantity || 0),
-              totalAmount: parseNumericInput(tradeDraft.totalAmount || "0"),
+              totalAmount: enteredTotalAmount,
               settings,
               totalAmountIncludesFees: tradeDraft.type === "sell" && tradeDraft.totalAmountIncludesFees
             })
@@ -1053,9 +1054,13 @@ export default function StockLedgerApp() {
       unitPrice: derivedUnitPrice
     });
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
-    if (tradeDraft.buyMode === "totalAmount" && parseNumericInput(tradeDraft.totalAmount || "0") <= 0) {
+    if (tradeDraft.buyMode === "totalAmount" && enteredTotalAmount <= 0) {
       return setFormError((tradeDraft.type === "buy" ? "買入" : "賣出") + "金額需大於 0");
     }
+    const netAmountOverride =
+      parsed.data.buyMode === "totalAmount" && enteredTotalAmount > 0 && (parsed.data.type === "buy" || (parsed.data.type === "sell" && parsed.data.totalAmountIncludesFees))
+        ? enteredTotalAmount
+        : undefined;
     const portfolio = portfolios.find((item) => item.id === parsed.data.portfolioId);
     if (!portfolio) return setFormError("找不到帳本");
     const editingTrade = editingTradeId ? (trades.find((trade) => trade.id === editingTradeId) ?? null) : null;
@@ -1093,7 +1098,8 @@ export default function StockLedgerApp() {
       type: parsed.data.type,
       quantity: parsed.data.quantity,
       unitPrice: parsed.data.unitPrice,
-      settings
+      settings,
+      netAmountOverride
     });
 
     if (parsed.data.type === "sell" && !editingTrade) {
@@ -1125,7 +1131,8 @@ export default function StockLedgerApp() {
       settings,
       tradedAt: parsed.data.tradedAt,
       createdAt: new Date().toISOString(),
-      note: null
+      note: null,
+      netAmountOverride
     });
     const trade: Trade = editingTrade
       ? { ...tradeBase, id: editingTrade.id, created_at: editingTrade.created_at }
@@ -1203,6 +1210,7 @@ export default function StockLedgerApp() {
     setTradeDraft({ ...emptyTradeDraft, portfolioId: portfolio.id });
     setFormError("");
     setSheetMode(null);
+    await reloadCloudDataAfterWrite();
     showSuccess(isEditingTrade ? "更新成功" : "儲存成功", "交易、現金、持股與損益已重新計算。現價會在背景更新，完成後會顯示更新結果。");
     void refreshQuotesForStocks([stock], false).then((quoteResult) => {
       setMessage(

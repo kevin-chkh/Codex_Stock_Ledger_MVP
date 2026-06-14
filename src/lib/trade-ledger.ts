@@ -13,12 +13,18 @@ export function makeTrade(input: {
   tradedAt: string;
   createdAt: string;
   note?: string | null;
+  feeOverride?: number;
+  taxOverride?: number;
+  netAmountOverride?: number;
 }): Trade {
   const amounts = calculateTradeAmounts({
     type: input.type,
     quantity: input.quantity,
     unitPrice: input.unitPrice,
-    settings: input.settings
+    settings: input.settings,
+    feeOverride: input.feeOverride,
+    taxOverride: input.taxOverride,
+    netAmountOverride: input.netAmountOverride
   });
 
   return {

@@ -140,13 +140,16 @@ export function TradeForm({
       industry: found?.industry || ""
     }));
   };
+  const enteredTotalAmount = Number(stripNumberFormatting(draft.totalAmount || "0"));
+  const shouldKeepEnteredTotalAsNetAmount =
+    draft.buyMode === "totalAmount" && enteredTotalAmount > 0 && (draft.type === "buy" || (draft.type === "sell" && draft.totalAmountIncludesFees));
   const resolvedUnitPrice =
     draft.buyMode === "totalAmount"
       ? Number(draft.quantity || 0) > 0
         ? resolveUnitPriceFromTotalAmount({
             type: draft.type,
             quantity: Number(draft.quantity || 0),
-            totalAmount: Number(stripNumberFormatting(draft.totalAmount || "0")),
+            totalAmount: enteredTotalAmount,
             settings,
             totalAmountIncludesFees: draft.type === "sell" && draft.totalAmountIncludesFees
           })
@@ -156,7 +159,8 @@ export function TradeForm({
     type: draft.type,
     quantity: Number(draft.quantity || 0),
     unitPrice: resolvedUnitPrice,
-    settings
+    settings,
+    netAmountOverride: shouldKeepEnteredTotalAsNetAmount ? enteredTotalAmount : undefined
   });
   const estimatedRealizedProfit =
     draft.type === "sell" && selectedPosition
