@@ -142,7 +142,7 @@ export function TradeForm({
   };
   const enteredTotalAmount = Number(stripNumberFormatting(draft.totalAmount || "0"));
   const shouldKeepEnteredTotalAsNetAmount =
-    draft.buyMode === "totalAmount" && enteredTotalAmount > 0 && (draft.type === "buy" || (draft.type === "sell" && draft.totalAmountIncludesFees));
+    draft.buyMode === "totalAmount" && enteredTotalAmount > 0 && draft.totalAmountIncludesFees;
   const resolvedUnitPrice =
     draft.buyMode === "totalAmount"
       ? Number(draft.quantity || 0) > 0
@@ -151,7 +151,7 @@ export function TradeForm({
             quantity: Number(draft.quantity || 0),
             totalAmount: enteredTotalAmount,
             settings,
-            totalAmountIncludesFees: draft.type === "sell" && draft.totalAmountIncludesFees
+            totalAmountIncludesFees: draft.totalAmountIncludesFees
           })
         : 0
       : Number(draft.unitPrice || 0);
@@ -229,7 +229,18 @@ export function TradeForm({
           <StockSuggestionMenu items={nameSuggestions} onPick={pickSymbolSuggestion} />
         )}
       </div>
-      <Field label="股數" type="number" value={draft.quantity} onChange={(quantity) => setDraft((value) => ({ ...value, quantity }))} />
+      <Field
+        label="股數"
+        type="text"
+        inputMode="decimal"
+        value={draft.quantity}
+        onChange={(quantity) =>
+          setDraft((value) => ({
+            ...value,
+            quantity: stripNumberFormatting(quantity).replace(/[^\d.]/g, "")
+          }))
+        }
+      />
       {draft.buyMode === "totalAmount" ? (
         <>
           <Field
@@ -245,21 +256,19 @@ export function TradeForm({
             }
           />
           <section className="rounded-lg border border-ink/10 bg-paper p-3 text-sm">
-            {draft.type === "sell" && (
-              <label className="mb-3 flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
-                <span className="text-ink/70">已含手續費與交易稅</span>
-                <input
-                  type="checkbox"
-                  checked={draft.totalAmountIncludesFees}
-                  onChange={(event) =>
-                    setDraft((value) => ({
-                      ...value,
-                      totalAmountIncludesFees: event.target.checked
-                    }))
-                  }
-                />
-              </label>
-            )}
+            <label className="mb-3 flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
+              <span className="text-ink/70">{draft.type === "buy" ? "已含手續費" : "已含手續費與交易稅"}</span>
+              <input
+                type="checkbox"
+                checked={draft.totalAmountIncludesFees}
+                onChange={(event) =>
+                  setDraft((value) => ({
+                    ...value,
+                    totalAmountIncludesFees: event.target.checked
+                  }))
+                }
+              />
+            </label>
             <div className="flex justify-between">
               <span className="text-ink/60">自動計算每股價格</span>
               <strong>{decimal(resolvedUnitPrice, 2)}</strong>
@@ -267,7 +276,18 @@ export function TradeForm({
           </section>
         </>
       ) : (
-        <Field label="成交單價(股)" type="number" value={draft.unitPrice} onChange={(unitPrice) => setDraft((value) => ({ ...value, unitPrice }))} />
+        <Field
+          label="成交單價(股)"
+          type="text"
+          inputMode="decimal"
+          value={draft.unitPrice}
+          onChange={(unitPrice) =>
+            setDraft((value) => ({
+              ...value,
+              unitPrice: stripNumberFormatting(unitPrice).replace(/[^\d.]/g, "")
+            }))
+          }
+        />
       )}
       <Field label="產業別" value={draft.industry} onChange={(industry) => setDraft((value) => ({ ...value, industry }))} placeholder="半導體業 / ETF" />
       {draft.type === "sell" && (

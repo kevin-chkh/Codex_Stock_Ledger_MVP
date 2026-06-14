@@ -66,6 +66,8 @@ export function resolveUnitPriceFromTotalAmount(input: {
     return Math.round((grossAmount / input.quantity + Number.EPSILON) * 10000) / 10000;
   }
 
+  if (!input.totalAmountIncludesFees) return roundMoney(input.totalAmount / input.quantity);
+
   let grossAmount = roundMoney(input.totalAmount);
   for (let index = 0; index < 6; index += 1) {
     const fee = calculateFee(grossAmount, input.settings);

@@ -24,7 +24,7 @@ import { findStockBySymbol, loadStockCatalog, type StockCatalogItem } from "@/li
 import { buildPortfolioUpdates, deleteTradeFromPortfolios, hasOversoldPosition, makeTrade, tradeCashImpact } from "@/lib/trade-ledger";
 import type { CashMovement, CashMovementType, Portfolio, PortfolioStockOverride, Position, PositionAdjustment, Stock, StockTag, Trade, TradeType, UserSettings } from "@/lib/types";
 import { Dashboard } from "@/components/stock-ledger/dashboard";
-import { ConfirmSheet, ListSection, Row, SuccessSheet } from "@/components/stock-ledger/ui";
+import { ConfirmSheet, ListSection, NoticeSheet, Row, SuccessSheet } from "@/components/stock-ledger/ui";
 import { Trades } from "@/components/stock-ledger/trades";
 import { Holdings } from "@/components/stock-ledger/holdings";
 import { Analytics } from "@/components/stock-ledger/analytics";
@@ -78,6 +78,7 @@ type CsvImportSummary = {
   skipped: { line: number; reason: string; raw: string[] }[];
 };
 type SuccessState = { title: string; body: string } | null;
+type NoticeState = { title: string; body: string; tone?: "danger" | "primary" } | null;
 type ConfirmState =
   | { kind: "deleteTrade"; trade: Trade }
   | { kind: "deletePortfolio"; portfolio: Portfolio }
@@ -121,12 +122,22 @@ const portfolioSchema = z.object({
   note: z.string().optional()
 });
 
-const cashSchema = z.object({
-  portfolioId: z.string().min(1, "請選擇帳本"),
-  type: z.enum(["deposit", "withdraw", "adjust"]),
-  amount: z.coerce.number().positive("金額需大於 0"),
-  note: z.string().optional()
-});
+const cashSchema = z
+  .object({
+    portfolioId: z.string().min(1, "請選擇帳本"),
+    type: z.enum(["deposit", "withdraw", "adjust"]),
+    amount: z.coerce.number().min(0, "金額不可小於 0"),
+    note: z.string().optional()
+  })
+  .superRefine((data, context) => {
+    if (data.type !== "adjust" && data.amount <= 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["amount"],
+        message: "金額需大於 0"
+      });
+    }
+  });
 
 const stockSchema = z.object({
   stockId: z.string().min(1),
@@ -270,7 +281,9 @@ export default function StockLedgerApp() {
   const [stockAdjustBaseline, setStockAdjustBaseline] = useState({ quantity: 0, holdingCost: 0 });
   const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
   const [successState, setSuccessState] = useState<SuccessState>(null);
+  const [noticeState, setNoticeState] = useState<NoticeState>(null);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+  const dataMutationRevisionRef = useRef(0);
   const backgroundSyncInFlightRef = useRef(false);
   const lastBackgroundSyncAtRef = useRef(0);
 
@@ -731,6 +744,7 @@ export default function StockLedgerApp() {
 
   async function loadCloudData(uidValue: string) {
     if (!supabase) return;
+    const loadRevision = dataMutationRevisionRef.current;
     const [portfolioResult, stockResult, tagResult, overrideResult, tradeResult, cashResult, settingsResult, adjustmentsResult] = await Promise.all([
       supabase.from("portfolios").select("*").order("created_at", { ascending: true }),
       supabase.from("stocks").select("*").order("symbol", { ascending: true }),
@@ -741,6 +755,8 @@ export default function StockLedgerApp() {
       supabase.from("settings").select("*").eq("user_id", uidValue).maybeSingle(),
       supabase.from("position_adjustments").select("*").order("updated_at", { ascending: false })
     ]);
+
+    if (loadRevision !== dataMutationRevisionRef.current) return;
 
     const warnings: string[] = [];
 
@@ -843,6 +859,15 @@ export default function StockLedgerApp() {
     setSuccessState({ title, body });
   }
 
+  function showNotice(title: string, body: string, tone: "danger" | "primary" = "danger") {
+    setMessage("");
+    setNoticeState({ title, body, tone });
+  }
+
+  function markDataMutation() {
+    dataMutationRevisionRef.current += 1;
+  }
+
   function openSheet(mode: SheetMode) {
     clearInteractionMessages();
     setSheetMode(mode);
@@ -878,6 +903,7 @@ export default function StockLedgerApp() {
     setFormError("");
     const parsed = portfolioSchema.safeParse(portfolioDraft);
     if (!parsed.success) return setFormError(parsed.error.issues[0]?.message ?? "資料格式錯誤");
+    markDataMutation();
     const now = new Date().toISOString();
     let successMessage = "";
 
@@ -946,6 +972,7 @@ export default function StockLedgerApp() {
 
   async function deletePortfolio(portfolio: Portfolio) {
     setFormError("");
+    markDataMutation();
 
     if (supabase && hasSupabaseEnv) {
       const { error } = await supabase.rpc("delete_portfolio_transaction", { p_portfolio_id: portfolio.id });
@@ -969,6 +996,7 @@ export default function StockLedgerApp() {
     const portfolio = portfolios.find((item) => item.id === parsed.data.portfolioId);
     if (!portfolio) return setFormError("找不到帳本");
     if (parsed.data.type === "withdraw" && parsed.data.amount > portfolio.cash_balance) return setFormError("轉出金額不可超過現金餘額");
+    markDataMutation();
 
     const nextCash =
       parsed.data.type === "deposit"
@@ -1044,7 +1072,7 @@ export default function StockLedgerApp() {
               quantity: Number(tradeDraft.quantity || 0),
               totalAmount: enteredTotalAmount,
               settings,
-              totalAmountIncludesFees: tradeDraft.type === "sell" && tradeDraft.totalAmountIncludesFees
+              totalAmountIncludesFees: tradeDraft.totalAmountIncludesFees
             })
           : 0
         : Number(tradeDraft.unitPrice || 0);
@@ -1058,7 +1086,7 @@ export default function StockLedgerApp() {
       return setFormError((tradeDraft.type === "buy" ? "買入" : "賣出") + "金額需大於 0");
     }
     const netAmountOverride =
-      parsed.data.buyMode === "totalAmount" && enteredTotalAmount > 0 && (parsed.data.type === "buy" || (parsed.data.type === "sell" && parsed.data.totalAmountIncludesFees))
+      parsed.data.buyMode === "totalAmount" && enteredTotalAmount > 0 && parsed.data.totalAmountIncludesFees
         ? enteredTotalAmount
         : undefined;
     const portfolio = portfolios.find((item) => item.id === parsed.data.portfolioId);
@@ -1117,8 +1145,10 @@ export default function StockLedgerApp() {
     const oldImpact = editingTrade ? tradeCashImpact(editingTrade) : 0;
     const availableCash = editingTrade?.portfolio_id === portfolio.id ? portfolio.cash_balance - oldImpact : portfolio.cash_balance;
     if (parsed.data.type === "buy" && !settings.allow_negative_cash && amounts.netAmount > availableCash) {
-      return setFormError("現金餘額不足。可到設定開啟允許負現金。");
+      showNotice("帳本餘額不足", `這筆買入需要 ${currency(amounts.netAmount)}，目前可用現金為 ${currency(availableCash)}。請先調整買入金額或到帳本加入資金。`);
+      return;
     }
+    markDataMutation();
 
     const tradeBase = makeTrade({
       id: uid(),
@@ -1210,7 +1240,6 @@ export default function StockLedgerApp() {
     setTradeDraft({ ...emptyTradeDraft, portfolioId: portfolio.id });
     setFormError("");
     setSheetMode(null);
-    await reloadCloudDataAfterWrite();
     showSuccess(isEditingTrade ? "更新成功" : "儲存成功", "交易、現金、持股與損益已重新計算。現價會在背景更新，完成後會顯示更新結果。");
     void refreshQuotesForStocks([stock], false).then((quoteResult) => {
       setMessage(
@@ -1239,6 +1268,7 @@ export default function StockLedgerApp() {
       setMessage("刪除失敗：找不到帳本。");
       return setFormError("找不到帳本");
     }
+    markDataMutation();
 
     if (supabase && hasSupabaseEnv) {
       const { error: deleteError } = await supabase.rpc("delete_trade_transaction", { p_trade_id: trade.id });
@@ -1328,6 +1358,7 @@ export default function StockLedgerApp() {
     const stock = stocks.find((item) => item.id === parsed.stockId);
     if (!stock) return setFormError("找不到股票");
     if (parsed.quantity === 0 && parsed.holdingCost > 0) return setFormError("持有庫存為 0 時，持有成本也必須為 0。");
+    markDataMutation();
     const overrideUpdatedAt = new Date().toISOString();
     const nextOverride: PortfolioStockOverride = {
       id: portfolioStockOverrides.find((item) => item.portfolio_id === parsed.portfolioId && item.stock_id === stock.id)?.id ?? uid(),
@@ -1572,6 +1603,7 @@ export default function StockLedgerApp() {
       }
 
       if (supabase && hasSupabaseEnv) {
+        markDataMutation();
         const changedStocks = nextStocks.filter((stock) => {
           const old = stocks.find((item) => item.id === stock.id);
           return !old || old.name !== stock.name || old.market !== stock.market || old.industry !== stock.industry || old.current_price !== stock.current_price || old.price_updated_at !== stock.price_updated_at;
@@ -1778,6 +1810,7 @@ export default function StockLedgerApp() {
       }
 
       if (supabase && hasSupabaseEnv) {
+        markDataMutation();
         const newStocks = nextStocks.filter((stock) => !stocks.some((old) => old.id === stock.id));
         const deletedAdjustments = [...deletedAdjustmentKeys].map((key) => {
           const [portfolioId, stockId] = key.split(":");
@@ -2182,6 +2215,14 @@ export default function StockLedgerApp() {
           title={successState.title}
           body={successState.body}
           onClose={() => setSuccessState(null)}
+        />
+      )}
+      {noticeState && (
+        <NoticeSheet
+          title={noticeState.title}
+          body={noticeState.body}
+          tone={noticeState.tone}
+          onClose={() => setNoticeState(null)}
         />
       )}
     </main>

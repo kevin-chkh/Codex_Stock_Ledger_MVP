@@ -25,7 +25,7 @@ create table if not exists public.cash_movements (
   user_id uuid not null references auth.users(id) on delete cascade,
   portfolio_id uuid not null references public.portfolios(id) on delete cascade,
   type text not null check (type in ('deposit', 'withdraw', 'adjust')),
-  amount numeric(18, 2) not null check (amount > 0),
+  amount numeric(18, 2) not null check ((type = 'adjust' and amount >= 0) or (type <> 'adjust' and amount > 0)),
   balance_after numeric(18, 2) not null,
   occurred_at date not null default current_date,
   note text
@@ -140,6 +140,32 @@ begin
     alter table public.stock_tags
     add constraint stock_tags_portfolio_id_fkey
     foreign key (portfolio_id) references public.portfolios(id) on delete cascade;
+  end if;
+end $$;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'cash_movements'
+      and constraint_name = 'cash_movements_amount_check'
+  ) then
+    alter table public.cash_movements
+    drop constraint cash_movements_amount_check;
+  end if;
+
+  if not exists (
+    select 1
+    from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'cash_movements'
+      and constraint_name = 'cash_movements_amount_by_type_check'
+  ) then
+    alter table public.cash_movements
+    add constraint cash_movements_amount_by_type_check
+    check ((type = 'adjust' and amount >= 0) or (type <> 'adjust' and amount > 0));
   end if;
 end $$;
 
@@ -550,7 +576,7 @@ begin
       using errcode = '22023';
   end if;
 
-  if p_amount <= 0 then
+  if (p_type = 'adjust' and p_amount < 0) or (p_type <> 'adjust' and p_amount <= 0) then
     raise exception 'invalid_cash_movement_amount'
       using errcode = '22023';
   end if;

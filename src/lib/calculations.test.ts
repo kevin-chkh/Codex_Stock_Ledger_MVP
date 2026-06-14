@@ -103,6 +103,18 @@ describe("calculateTradeAmounts", () => {
         type: "buy",
         quantity: 100,
         totalAmount: 10012.83,
+        settings: DEFAULT_SETTINGS,
+        totalAmountIncludesFees: true
+      })
+    ).toBe(100);
+  });
+
+  it("keeps buy total amount mode as gross amount when fee is not included", () => {
+    expect(
+      resolveUnitPriceFromTotalAmount({
+        type: "buy",
+        quantity: 100,
+        totalAmount: 10000,
         settings: DEFAULT_SETTINGS
       })
     ).toBe(100);
