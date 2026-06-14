@@ -91,7 +91,16 @@ export function Dashboard({
         <div className="border-b border-white/10 px-4 py-4 text-white">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-sm text-white/65">總資產</p>
+              <div className="flex items-center gap-1 text-sm text-white/65">
+                <p>總資產</p>
+                <InfoTip
+                  label="總資產說明"
+                  body={[
+                    "總資產 = 現金 + 持股市值。",
+                    "持股市值只計入目前仍持有的股票，已清倉股票不會再計入資產。"
+                  ]}
+                />
+              </div>
               <p className="mt-1 text-3xl font-bold tracking-tight">{currency(metrics.totalAssets)}</p>
             </div>
             <select
@@ -107,8 +116,26 @@ export function Dashboard({
             </select>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <Metric label="總損益" value={currency(metrics.totalProfit)} strong className={metrics.totalProfit >= 0 ? "text-red-200" : "text-emerald-200"} />
-            <Metric label="總報酬率" value={percent(metrics.totalReturnRate)} strong className={metrics.totalReturnRate >= 0 ? "text-red-200" : "text-emerald-200"} />
+            <Metric
+              label="總損益"
+              value={currency(metrics.totalProfit)}
+              strong
+              className={metrics.totalProfit >= 0 ? "text-red-200" : "text-emerald-200"}
+              tipBody={[
+                "總損益 = 已實現損益 + 預估損益。",
+                "預估損益已扣除未來賣出手續費與交易稅。"
+              ]}
+            />
+            <Metric
+              label="總報酬率"
+              value={percent(metrics.totalReturnRate)}
+              strong
+              className={metrics.totalReturnRate >= 0 ? "text-red-200" : "text-emerald-200"}
+              tipBody={[
+                "總報酬率 = 總損益 / 累計投入。",
+                "累計投入來自帳本資金加入紀錄，不包含轉出金額。"
+              ]}
+            />
           </div>
           <p className="mt-3 rounded-md bg-white/5 px-3 py-2 text-xs leading-5 text-white/65">
             預估損益已扣除賣出手續費與交易稅，較接近實際可落袋金額。
@@ -116,7 +143,16 @@ export function Dashboard({
         </div>
         <div className="grid grid-cols-2 gap-px bg-white/10">
           <div className="bg-ink px-5 py-4 text-white">
-            <p className="text-xs text-white/55">現金</p>
+            <div className="flex items-center gap-1 text-xs text-white/55">
+              <p>現金</p>
+              <InfoTip
+                label="現金說明"
+                body={[
+                  "現金為目前帳本的 cash_balance。",
+                  "買入會扣除現金，賣出與資金加入會增加現金，轉出會減少現金。"
+                ]}
+              />
+            </div>
             <p className="mt-2 text-lg font-semibold">{currency(metrics.cash)}</p>
           </div>
           <div className="bg-ink px-5 py-4 text-white">
@@ -133,7 +169,16 @@ export function Dashboard({
             <p className="mt-2 text-lg font-semibold">{currency(metrics.holdingCost)}</p>
           </div>
           <div className="bg-ink px-5 py-4 text-white">
-            <p className="text-xs text-white/55">持股市值</p>
+            <div className="flex items-center gap-1 text-xs text-white/55">
+              <p>持股市值</p>
+              <InfoTip
+                label="持股市值說明"
+                body={[
+                  "持股市值 = 每檔持股數量 × 現價後加總。",
+                  "只計入目前仍持有的股票。現價更新失敗時會沿用最後成功更新的價格。"
+                ]}
+              />
+            </div>
             <p className="mt-2 text-lg font-semibold">{currency(metrics.holdingsValue)}</p>
           </div>
           <div className="bg-ink px-5 py-4 text-white">
@@ -157,6 +202,10 @@ export function Dashboard({
           value={currency(metrics.realizedProfit)}
           valueClass={profitClass(metrics.realizedProfit)}
           hint="點擊查看各股明細"
+          tipBody={[
+            "已實現損益來自賣出交易。",
+            "已賣出的股票即使清倉，損益仍會保留在已實現明細。"
+          ]}
           onClick={() => setDetailMode((current) => (current === "realized" ? null : "realized"))}
         />
         <SmallCard
@@ -164,6 +213,10 @@ export function Dashboard({
           value={currency(metrics.estimatedProfit)}
           valueClass={profitClass(metrics.estimatedProfit)}
           hint="點擊查看各股明細"
+          tipBody={[
+            "預估損益 = 持股市值 - 預估賣出手續費 - 預估交易稅 - 持倉成本。",
+            "此數字只計入目前仍持有的股票。"
+          ]}
           onClick={() => setDetailMode((current) => (current === "unrealized" ? null : "unrealized"))}
         />
       </section>

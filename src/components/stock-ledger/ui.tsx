@@ -4,10 +4,25 @@ import { CircleHelp } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-export function Metric({ label, value, strong, className = "" }: { label: string; value: string; strong?: boolean; className?: string }) {
+export function Metric({
+  label,
+  value,
+  strong,
+  className = "",
+  tipBody
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  className?: string;
+  tipBody?: string[];
+}) {
   return (
     <div>
-      <p className="text-xs text-white/60">{label}</p>
+      <div className="flex items-center gap-1 text-xs text-white/60">
+        <p>{label}</p>
+        {tipBody ? <InfoTip label={`${label}說明`} body={tipBody} /> : null}
+      </div>
       <p className={"mt-1 " + (strong ? "text-xl font-bold" : "font-semibold") + " " + className}>{value}</p>
     </div>
   );
@@ -18,31 +33,54 @@ export function SmallCard({
   value,
   valueClass = "",
   hint,
+  tipBody,
   onClick
 }: {
   label: string;
   value: string;
   valueClass?: string;
   hint?: string;
+  tipBody?: string[];
   onClick?: () => void;
 }) {
-  const content = (
+  const labelNode = (
+    <div className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.08em] text-ink/45">
+      <p>{label}</p>
+      {tipBody ? <InfoTip label={`${label}說明`} body={tipBody} /> : null}
+    </div>
+  );
+  const valueNode = (
     <>
-      <p className="text-[11px] font-medium uppercase tracking-[0.08em] text-ink/45">{label}</p>
+      <div className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-[0.08em] text-ink/45">
+        <p>{label}</p>
+        {tipBody ? <InfoTip label={`${label}說明`} body={tipBody} /> : null}
+      </div>
       <p className={"mt-2 text-lg font-bold leading-tight " + valueClass}>{value}</p>
       {hint ? <p className="mt-2 text-xs text-ink/45">{hint}</p> : null}
     </>
   );
 
   if (onClick) {
+    if (tipBody) {
+      return (
+        <section className="rounded-lg border border-ink/10 bg-white p-4 text-left shadow-soft transition hover:border-mint/30">
+          {labelNode}
+          <button className="mt-2 w-full text-left" onClick={onClick}>
+            <p className={"text-lg font-bold leading-tight " + valueClass}>{value}</p>
+            {hint ? <p className="mt-2 text-xs text-ink/45">{hint}</p> : null}
+          </button>
+        </section>
+      );
+    }
+
     return (
       <button className="w-full rounded-lg border border-ink/10 bg-white p-4 text-left shadow-soft transition hover:border-mint/30" onClick={onClick}>
-        {content}
+        {valueNode}
       </button>
     );
   }
 
-  return <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">{content}</section>;
+  return <section className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">{valueNode}</section>;
 }
 
 export function SmallMetric({ label, value, className = "" }: { label: string; value: string; className?: string }) {
@@ -129,7 +167,7 @@ export function InfoTip({ label, body }: { label: string; body: string[] }) {
 
   return (
     <>
-      <button aria-label={label} className="inline-flex text-white/55 transition hover:text-white/80" onClick={() => setOpen(true)}>
+      <button aria-label={label} className="inline-flex text-current opacity-60 transition hover:opacity-90" onClick={() => setOpen(true)}>
         <CircleHelp size={14} />
       </button>
       {open ? (
