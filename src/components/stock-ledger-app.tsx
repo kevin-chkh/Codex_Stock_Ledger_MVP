@@ -1359,8 +1359,8 @@ export default function StockLedgerApp() {
       stockId: position.stock_id,
       portfolioId: position.portfolio_id,
       currentPrice: String(position.current_price),
-      quantity: String(adjustment?.adjusted_quantity ?? position.quantity),
-      holdingCost: String(adjustment?.adjusted_cost ?? position.holding_cost),
+      quantity: String(position.trade_quantity ?? position.quantity),
+      holdingCost: String(position.trade_holding_cost ?? position.holding_cost),
       industry: override?.industry_override ?? (position.industry === "未分類" ? "" : position.industry),
       tags: position.tags.join(", ")
     });

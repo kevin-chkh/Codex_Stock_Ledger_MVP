@@ -262,7 +262,6 @@ export function Holdings({
                           <p className="truncate font-semibold">
                             {position.symbol} {position.name}
                           </p>
-                          {position.has_manual_adjustment && !isClosed ? <ManualAdjustmentBadge /> : null}
                           {isClosed ? <span className="shrink-0 rounded-full bg-ink/10 px-2 py-0.5 text-[11px] font-semibold text-ink/60">已清倉</span> : expanded ? <ChevronUp size={16} className="shrink-0 text-ink/45" /> : <ChevronDown size={16} className="shrink-0 text-ink/45" />}
                         </div>
                         <p className="mt-1 truncate text-xs text-ink/50">
@@ -387,9 +386,9 @@ function ExpandedHoldingCard({
           <p className="truncate font-semibold">
             {position.symbol} {position.name}
           </p>
-          {position.has_manual_adjustment ? <ManualAdjustmentBadge /> : null}
           <p className="mt-1 truncate text-xs text-ink/50">
             {position.quantity} 股{position.industry ? ` · ${position.industry}` : ""}
+            {position.has_manual_adjustment ? " · 校正值" : ""}
           </p>
         </div>
         <button
@@ -471,8 +470,4 @@ function ExpandedHoldingCard({
       ) : null}
     </article>
   );
-}
-
-function ManualAdjustmentBadge() {
-  return <span className="shrink-0 rounded-full bg-gold/15 px-2 py-0.5 text-[11px] font-semibold text-ink/65">已手動校正</span>;
 }
