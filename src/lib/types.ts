@@ -122,6 +122,9 @@ export type Position = {
   unrealized_return_rate: number;
   total_profit: number;
   total_return_rate: number;
+  has_manual_adjustment?: boolean;
+  trade_quantity?: number;
+  trade_holding_cost?: number;
 };
 
 export type DashboardMetrics = {

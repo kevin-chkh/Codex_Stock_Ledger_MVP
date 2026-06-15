@@ -24,7 +24,13 @@ type TradeDraft = {
 type PortfolioDraft = { name: string; initialAmount: string; note: string };
 type CashDraft = { portfolioId: string; type: CashMovementType; amount: string; note: string };
 type StockDraft = { stockId: string; portfolioId: string; currentPrice: string; quantity: string; holdingCost: string; industry: string; tags: string };
-type StockAdjustBaseline = { quantity: number; holdingCost: number };
+type StockAdjustBaseline = {
+  tradeQuantity: number;
+  tradeHoldingCost: number;
+  effectiveQuantity: number;
+  effectiveHoldingCost: number;
+  hasManualAdjustment: boolean;
+};
 
 function stripNumberFormatting(value: string) {
   return value.replace(/,/g, "").trim();
@@ -441,16 +447,25 @@ export function StockAdjustForm({
         placeholder="核心, 長期, 短線"
       />
       <section className="rounded-lg border border-gold/20 bg-gold/5 p-3 text-sm">
-        <p className="font-semibold text-ink">校正前對照</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-semibold text-ink">校正前對照</p>
+          {baseline.hasManualAdjustment ? <span className="rounded-full bg-gold/15 px-2 py-1 text-[11px] font-semibold text-ink/65">已手動校正</span> : null}
+        </div>
         <div className="mt-2 flex justify-between">
-          <span className="text-ink/60">系統股數 / 成本</span>
-          <strong>{baseline.quantity} 股 / {currency(baseline.holdingCost)}</strong>
+          <span className="text-ink/60">交易推算</span>
+          <strong>{baseline.tradeQuantity} 股 / {currency(baseline.tradeHoldingCost)}</strong>
+        </div>
+        <div className="mt-2 flex justify-between">
+          <span className="text-ink/60">目前有效</span>
+          <strong>{baseline.effectiveQuantity} 股 / {currency(baseline.effectiveHoldingCost)}</strong>
         </div>
         <div className="mt-2 flex justify-between">
           <span className="text-ink/60">將寫入手動值</span>
           <strong>{quantity} 股 / {currency(holdingCost)}</strong>
         </div>
-        <p className="mt-2 text-xs text-ink/60">此操作不會新增交易，僅覆寫顯示用成本。</p>
+        <p className="mt-2 text-xs leading-5 text-ink/60">
+          此操作不會新增交易，會以手動值作為新基準；之後新增的交易會在此基準上繼續加減。
+        </p>
       </section>
       <SubmitButton onClick={onSubmit}>送出校正</SubmitButton>
     </div>

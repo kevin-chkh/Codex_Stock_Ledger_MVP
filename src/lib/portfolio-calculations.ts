@@ -172,6 +172,15 @@ export function buildPositions(
     drafts.set(key, draft);
   }
 
+  const tradeDraftsByKey = new Map(
+    [...drafts.entries()].map(([key, draft]) => [
+      key,
+      {
+        ...draft
+      }
+    ])
+  );
+
   for (const adjustment of adjustmentsByKey.values()) {
     const key = `${adjustment.portfolio_id}:${adjustment.stock_id}`;
     const existingDraft =
@@ -209,6 +218,8 @@ export function buildPositions(
     .map((draft) => {
       const stock = stocksById.get(draft.stock_id);
       const key = `${draft.portfolio_id}:${draft.stock_id}`;
+      const tradeDraft = tradeDraftsByKey.get(key);
+      const adjustment = adjustmentsByKey.get(key);
       const openQuantity = Math.max(roundMoney(draft.quantity), 0);
       const openCost = Math.max(roundMoney(draft.remaining_cost), 0);
       const openPrincipal = Math.max(roundMoney(draft.remaining_principal), 0);
@@ -250,7 +261,10 @@ export function buildPositions(
         unrealized_profit: estimatedProfit,
         unrealized_return_rate: openCost > 0 ? estimatedProfit / openCost : 0,
         total_profit: totalProfit,
-        total_return_rate: openCost > 0 ? totalProfit / openCost : 0
+        total_return_rate: openCost > 0 ? totalProfit / openCost : 0,
+        has_manual_adjustment: Boolean(adjustment),
+        trade_quantity: Math.max(roundMoney(tradeDraft?.quantity ?? 0), 0),
+        trade_holding_cost: Math.max(roundMoney(tradeDraft?.remaining_cost ?? 0), 0)
       };
     });
 }

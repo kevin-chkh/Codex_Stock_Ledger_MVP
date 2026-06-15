@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { CashMovement, Portfolio } from "@/lib/types";
 import { currency } from "@/lib/format";
 import { ListSection } from "./ui";
@@ -21,6 +22,8 @@ export function Portfolios({
   onDelete: (portfolio: Portfolio) => void;
   onSelectDefault: (portfolioId: string) => void;
 }) {
+  const [expandedMovementPortfolios, setExpandedMovementPortfolios] = useState<Record<string, boolean>>({});
+
   return (
     <div className="space-y-4">
       <section>
@@ -35,6 +38,8 @@ export function Portfolios({
             .sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime());
           const movementCount = portfolioMovements.length;
           const isDefault = selectedPortfolioId === portfolio.id;
+          const isMovementsExpanded = Boolean(expandedMovementPortfolios[portfolio.id]);
+          const visibleMovements = isMovementsExpanded ? portfolioMovements : portfolioMovements.slice(0, 3);
           return (
             <article key={portfolio.id} className="rounded-lg border border-ink/10 bg-white p-4 shadow-soft">
               <div className="flex items-start justify-between gap-3">
@@ -84,10 +89,12 @@ export function Portfolios({
                 <div className="mt-4 rounded-lg border border-ink/10 bg-paper/45 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-semibold">資金異動紀錄</p>
-                    <p className="text-xs text-ink/45">最近 {Math.min(3, portfolioMovements.length)} 筆</p>
+                    <p className="text-xs text-ink/45">
+                      {isMovementsExpanded ? `全部 ${portfolioMovements.length} 筆` : `最近 ${Math.min(3, portfolioMovements.length)} 筆`}
+                    </p>
                   </div>
                   <div className="mt-3 space-y-2">
-                    {portfolioMovements.slice(0, 3).map((movement) => (
+                    {visibleMovements.map((movement) => (
                       <div key={movement.id} className="rounded-md bg-white px-3 py-2 text-sm">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -107,7 +114,23 @@ export function Portfolios({
                     ))}
                   </div>
                   {portfolioMovements.length > 3 ? (
-                    <p className="mt-2 text-xs text-ink/45">另有 {portfolioMovements.length - 3} 筆較早紀錄。</p>
+                    <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-ink/8 bg-white px-3 py-2">
+                      <p className="text-xs text-ink/45">
+                        {isMovementsExpanded ? `目前顯示 ${portfolioMovements.length} / ${portfolioMovements.length} 筆` : `另有 ${portfolioMovements.length - 3} 筆較早紀錄`}
+                      </p>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-full border border-mint/20 bg-mint/10 px-3 py-1.5 text-xs font-semibold text-mint"
+                        onClick={() =>
+                          setExpandedMovementPortfolios((current) => ({
+                            ...current,
+                            [portfolio.id]: !current[portfolio.id]
+                          }))
+                        }
+                      >
+                        {isMovementsExpanded ? "收合" : "全部展開"}
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               ) : null}

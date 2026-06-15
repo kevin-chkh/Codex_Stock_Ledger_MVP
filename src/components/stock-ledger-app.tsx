@@ -280,7 +280,13 @@ export default function StockLedgerApp() {
   const [portfolioDraft, setPortfolioDraft] = useState({ name: "", initialAmount: "", note: "" });
   const [cashDraft, setCashDraft] = useState({ portfolioId: "", type: "deposit" as CashMovementType, amount: "", note: "" });
   const [stockDraft, setStockDraft] = useState({ stockId: "", portfolioId: "", currentPrice: "", quantity: "", holdingCost: "", industry: "", tags: "" });
-  const [stockAdjustBaseline, setStockAdjustBaseline] = useState({ quantity: 0, holdingCost: 0 });
+  const [stockAdjustBaseline, setStockAdjustBaseline] = useState({
+    tradeQuantity: 0,
+    tradeHoldingCost: 0,
+    effectiveQuantity: 0,
+    effectiveHoldingCost: 0,
+    hasManualAdjustment: false
+  });
   const [csvImportSummary, setCsvImportSummary] = useState<CsvImportSummary | null>(null);
   const [successState, setSuccessState] = useState<SuccessState>(null);
   const [noticeState, setNoticeState] = useState<NoticeState>(null);
@@ -1359,8 +1365,11 @@ export default function StockLedgerApp() {
       tags: position.tags.join(", ")
     });
     setStockAdjustBaseline({
-      quantity: position.quantity,
-      holdingCost: position.holding_cost
+      tradeQuantity: position.trade_quantity ?? position.quantity,
+      tradeHoldingCost: position.trade_holding_cost ?? position.holding_cost,
+      effectiveQuantity: position.quantity,
+      effectiveHoldingCost: position.holding_cost,
+      hasManualAdjustment: Boolean(adjustment ?? position.has_manual_adjustment)
     });
     setSheetMode("stockAdjust");
   }

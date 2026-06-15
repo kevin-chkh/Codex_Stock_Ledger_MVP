@@ -221,6 +221,9 @@ describe("buildPositions", () => {
     expect(positions[0].holding_cost).toBe(8640);
     expect(positions[0].remaining_cost).toBe(8640);
     expect(positions[0].average_cost).toBe(108);
+    expect(positions[0].has_manual_adjustment).toBe(true);
+    expect(positions[0].trade_quantity).toBe(100);
+    expect(positions[0].trade_holding_cost).toBe(10014.25);
   });
 
   it("uses the latest position adjustment when duplicate adjustment rows exist", () => {
