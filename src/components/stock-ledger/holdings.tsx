@@ -284,7 +284,11 @@ export function Holdings({
                       </div>
                     </div>
 
-                    {expanded && !isClosed ? <ExpandedHoldingCard position={position} onAdjustCost={onAdjustCost} /> : null}
+                    {expanded && !isClosed ? (
+                      <div className="mt-3 rounded-xl border border-ink/10 bg-[#fcfbf7] p-3">
+                        <HoldingDetailPanel position={position} onAdjustCost={onAdjustCost} />
+                      </div>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -369,6 +373,97 @@ function ClosedHoldingCard({ position }: { position: Position }) {
         </div>
       ) : null}
     </article>
+  );
+}
+
+function HoldingDetailPanel({
+  position,
+  onAdjustCost
+}: {
+  position: Position;
+  onAdjustCost: (position: Position) => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-ink/50">
+          展開明細{position.has_manual_adjustment ? " · 校正值" : ""}
+        </p>
+        <button
+          className="rounded-xl border border-ink/10 bg-white px-4 py-2 text-sm font-semibold text-ink/75"
+          onClick={() => onAdjustCost(position)}
+          aria-label={`調整 ${position.symbol} ${position.name} 成本`}
+        >
+          調整
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-lg bg-white px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] text-ink/45">持有成本(含手續費)</p>
+            <p className="mt-2 text-2xl font-bold">{currency(position.holding_cost)}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] text-ink/45">預估損益</p>
+            <p className={"mt-2 text-2xl font-bold " + profitClass(position.estimated_profit)}>{currency(position.estimated_profit)}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-3">
+        <div className="rounded-lg bg-white px-4 py-4">
+          <p className="text-[11px] text-ink/45">每股均價</p>
+          <p className="mt-2 text-lg font-semibold">{decimal(position.average_cost, 1)}</p>
+        </div>
+        <div className="rounded-lg bg-white px-4 py-4">
+          <p className="text-[11px] text-ink/45">現價</p>
+          <p className="mt-2 text-lg font-semibold">{decimal(position.current_price, 2)}</p>
+        </div>
+        <div className="rounded-lg bg-white px-4 py-4">
+          <p className="text-[11px] text-ink/45">報酬率</p>
+          <p className={"mt-2 text-lg font-semibold " + profitClass(position.estimated_profit)}>{percent(position.estimated_return_rate)}</p>
+        </div>
+      </div>
+
+      <details className="mt-3 rounded-lg border border-ink/10 bg-white px-4 py-3 text-sm">
+        <summary className="cursor-pointer select-none font-semibold text-ink/70">進階：市值、帳面損益與預估賣出成本</summary>
+        <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+          <div className="rounded-md bg-paper px-3 py-3">
+            <p className="text-ink/45">市值</p>
+            <p className="mt-1 text-base font-semibold">{currency(position.market_value)}</p>
+          </div>
+          <div className="rounded-md bg-paper px-3 py-3">
+            <p className="text-ink/45">帳面損益</p>
+            <p className={"mt-1 text-base font-semibold " + profitClass(position.book_profit)}>{currency(position.book_profit)}</p>
+          </div>
+          <div className="rounded-md bg-paper px-3 py-3">
+            <p className="text-ink/45">賣出手續費</p>
+            <p className="mt-1 font-semibold">{currency(position.estimated_sell_fee)}</p>
+          </div>
+          <div className="rounded-md bg-paper px-3 py-3">
+            <p className="text-ink/45">交易稅</p>
+            <p className="mt-1 font-semibold">{currency(position.estimated_sell_tax)}</p>
+          </div>
+        </div>
+      </details>
+
+      {position.realized_profit !== 0 ? (
+        <p className={"mt-3 text-sm " + profitClass(position.realized_profit)}>
+          已實現損益 {currency(position.realized_profit)}
+        </p>
+      ) : null}
+
+      {position.tags.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          {position.tags.map((tag) => (
+            <span key={tag} className="rounded-full bg-gold/15 px-2 py-1 text-ink/70">
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 

@@ -11,12 +11,20 @@ const colors = ["#2f7d68", "#c6973f", "#c75b4d", "#4f6f9f", "#7c6a9d", "#61705f"
 const ANALYTICS_COLLAPSE_STORAGE_KEY = "stock-ledger.analytics.collapsed";
 const ANALYTICS_VIEW_MODE_STORAGE_KEY = "stock-ledger.analytics.viewMode";
 const COLLAPSIBLE_CARD_KEYS = ["industry", "tags", "etfEquity", "assets", "concentration", "trend", "contribution"] as const;
+const realizedWindowLabelMap: Record<RealizedWindow, string> = {
+  "1m": "近一月",
+  "3m": "近三月",
+  "6m": "近半年",
+  "1y": "近一年",
+  all: "全部"
+};
 
 type TrendWindow = "14d" | "30d";
 type ProfitMode = "realized" | "unrealized";
 type AnalysisBasis = "marketValue" | "holdingCost";
 type ContributionGroup = "stock" | "industry" | "tag";
 type AnalyticsViewMode = "simple" | "full";
+type RealizedWindow = "1m" | "3m" | "6m" | "1y" | "all";
 
 export function Analytics({
   positions,
@@ -40,6 +48,7 @@ export function Analytics({
   const [profitMode, setProfitMode] = useState<ProfitMode>("unrealized");
   const [analysisBasis, setAnalysisBasis] = useState<AnalysisBasis>("holdingCost");
   const [viewMode, setViewMode] = useState<AnalyticsViewMode>("simple");
+  const [realizedWindow, setRealizedWindow] = useState<RealizedWindow>("1y");
   const [concentrationVisibleCount, setConcentrationVisibleCount] = useState(5);
   const [profitVisibleCount, setProfitVisibleCount] = useState(5);
   const [contributionGroup, setContributionGroup] = useState<ContributionGroup>("stock");
@@ -82,7 +91,7 @@ export function Analytics({
     setProfitVisibleCount(5);
     setExpandedContributionKeys({});
     setExpandedHoldingKeys({});
-  }, [tagFilter, analysisBasis, profitMode, selectedPortfolioId, contributionGroup]);
+  }, [tagFilter, analysisBasis, profitMode, selectedPortfolioId, contributionGroup, realizedWindow]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -218,19 +227,23 @@ export function Analytics({
 
   const etfEquityData = useMemo(() => {
     const rows = [
-      { name: "ETF", value: 0 },
-      { name: "個股", value: 0 }
+      { name: "ETF", value: 0, holdingCost: 0, marketValue: 0, estimatedProfit: 0 },
+      { name: "個股", value: 0, holdingCost: 0, marketValue: 0, estimatedProfit: 0 }
     ];
     const sourcePositions = filteredPositions;
     for (const position of sourcePositions) {
       const bucket = isEtfPosition(position) ? rows[0] : rows[1];
       bucket.value = roundMoney(bucket.value + getPositionBasisValue(position, analysisBasis));
+      bucket.holdingCost = roundMoney(bucket.holdingCost + position.holding_cost);
+      bucket.marketValue = roundMoney(bucket.marketValue + position.market_value);
+      bucket.estimatedProfit = roundMoney(bucket.estimatedProfit + position.estimated_profit);
     }
     return rows
       .filter((item) => item.value > 0)
       .map((item) => ({
         ...item,
-        ratio: holdingsBasisTotal > 0 ? item.value / holdingsBasisTotal : 0
+        ratio: holdingsBasisTotal > 0 ? item.value / holdingsBasisTotal : 0,
+        returnRate: item.holdingCost > 0 ? item.estimatedProfit / item.holdingCost : 0
       }));
   }, [filteredPositions, holdingsBasisTotal, analysisBasis]);
   const etfRatio = etfEquityData.find((item) => item.name === "ETF")?.ratio ?? 0;
@@ -313,6 +326,18 @@ export function Analytics({
 
   const allCardsCollapsed = COLLAPSIBLE_CARD_KEYS.every((key) => collapsedCards[key]);
 
+  const latestSellDate = useMemo(() => {
+    const sellTrades = trades.filter((trade) => trade.type === "sell");
+    if (!sellTrades.length) return latestTradeDate;
+    return sellTrades.reduce((latest, trade) => {
+      const current = new Date(trade.traded_at + "T00:00:00");
+      return current.getTime() > latest.getTime() ? current : latest;
+    }, new Date(sellTrades[0].traded_at + "T00:00:00"));
+  }, [latestTradeDate, trades]);
+
+  const realizedStartKey = useMemo(() => getRealizedStartKey(realizedWindow, latestSellDate), [latestSellDate, realizedWindow]);
+  const realizedWindowLabel = realizedWindowLabelMap[realizedWindow];
+
   const realizedStockRows = useMemo(() => {
     const stateByKey = new Map<string, { quantity: number; cost: number }>();
     const grouped = new Map<
@@ -325,6 +350,7 @@ export function Analytics({
         details: ContributionDetailRow[];
         tags: string[];
         industry: string;
+        isEtf: boolean;
       }
     >();
 
@@ -345,12 +371,14 @@ export function Analytics({
       state.quantity = roundMoney(state.quantity - trade.quantity);
       state.cost = roundMoney(state.cost - soldCost);
       stateByKey.set(key, state);
+      if (realizedStartKey && trade.traded_at < realizedStartKey) continue;
 
       const meta = profitPositionByStockId.get(trade.stock_id);
       const symbol = meta?.symbol || trade.stock?.symbol || "";
       const name = meta?.name || trade.stock?.name || symbol;
       const industry = meta?.industry || "未分類";
       const tags = meta?.tags ?? [];
+      const isEtf = meta ? isEtfPosition(meta) : isEtfMeta(symbol, name, industry);
       const current = grouped.get(trade.stock_id) ?? {
         key: trade.stock_id,
         label: `${symbol} ${name}`.trim(),
@@ -358,7 +386,8 @@ export function Analytics({
         soldCost: 0,
         details: [],
         tags,
-        industry
+        industry,
+        isEtf
       };
       current.realized = roundMoney(current.realized + profit);
       current.soldCost = roundMoney(current.soldCost + soldCost);
@@ -394,12 +423,44 @@ export function Analytics({
             shareText: Math.abs(item.realized) > 0 ? `佔此標的 ${percent(Math.abs(detail.metricValue) / Math.abs(item.realized))}` : "佔此標的 0.00%"
           })),
         tags: item.tags,
-        industry: item.industry
+        industry: item.industry,
+        isEtf: item.isEtf,
+        soldCost: item.soldCost
       }));
 
     if (tagFilter === "all") return rows;
     return rows.filter((item) => (item.tags.length ? item.tags.includes(tagFilter) : tagFilter === "未標籤"));
-  }, [profitPositionByStockId, tagFilter, trades]);
+  }, [profitPositionByStockId, realizedStartKey, tagFilter, trades]);
+
+  const realizedCategoryRows = useMemo(() => {
+    const rows = [
+      { name: "ETF", realized: 0, soldCost: 0, count: 0 },
+      { name: "個股", realized: 0, soldCost: 0, count: 0 }
+    ];
+    for (const row of realizedStockRows) {
+      const bucket = row.isEtf ? rows[0] : rows[1];
+      bucket.realized = roundMoney(bucket.realized + row.value);
+      bucket.soldCost = roundMoney(bucket.soldCost + row.soldCost);
+      bucket.count += 1;
+    }
+    return rows.map((row) => ({
+      ...row,
+      returnRate: row.soldCost > 0 ? row.realized / row.soldCost : 0
+    }));
+  }, [realizedStockRows]);
+
+  const realizedSummary = useMemo(
+    () =>
+      realizedCategoryRows.reduce(
+        (acc, row) => ({
+          realized: roundMoney(acc.realized + row.realized),
+          soldCost: roundMoney(acc.soldCost + row.soldCost),
+          count: acc.count + row.count
+        }),
+        { realized: 0, soldCost: 0, count: 0 }
+      ),
+    [realizedCategoryRows]
+  );
 
   const stockProfitRows = useMemo(() => {
     if (profitMode === "realized") {
@@ -410,7 +471,7 @@ export function Analytics({
         unrealized: 0,
         returnRate: item.returnRate,
         marketValue: 0,
-        basisValue: 0,
+        basisValue: item.soldCost,
         details: item.details
       }));
     }
@@ -479,7 +540,7 @@ export function Analytics({
         value: item[metricKey],
         returnRate: item.returnRate,
         ratio: 0,
-        subtitle: `市值 ${currency(item.marketValue)}`,
+        subtitle: profitMode === "realized" ? `已賣出成本 ${currency(item.basisValue)}` : `市值 ${currency(item.marketValue)}`,
         details: item.details
       }));
       const contributionTotal = totalContribution(rows);
@@ -814,6 +875,51 @@ export function Analytics({
               已實現
             </button>
           </div>
+          {profitMode === "realized" ? (
+            <>
+              <Segmented
+                value={realizedWindow}
+                onChange={(value) => setRealizedWindow(value as RealizedWindow)}
+                options={[
+                  ["1y", "近一年"],
+                  ["6m", "近半年"],
+                  ["3m", "近三月"],
+                  ["1m", "近一月"],
+                  ["all", "全部"]
+                ]}
+              />
+              <div className="rounded-xl border border-ink/8 bg-paper/45 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-ink">已實現損益摘要</p>
+                    <p className="mt-1 text-xs text-ink/50">{realizedWindowLabel} · 依 ETF / 個股拆分</p>
+                  </div>
+                  <div className="text-right">
+                    <p className={"text-sm font-bold " + profitClass(realizedSummary.realized)}>{currency(realizedSummary.realized)}</p>
+                    <p className={"mt-1 text-xs " + profitClass(realizedSummary.realized)}>
+                      報酬率 {percent(realizedSummary.soldCost > 0 ? realizedSummary.realized / realizedSummary.soldCost : 0)}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {realizedCategoryRows.map((row) => (
+                    <div key={row.name} className="rounded-xl border border-ink/6 bg-white px-3 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-ink">{row.name}</p>
+                          <p className="mt-1 text-xs text-ink/45">已賣出成本 {currency(row.soldCost)} · {row.count} 檔</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={"text-sm font-bold " + profitClass(row.realized)}>{currency(row.realized)}</p>
+                          <p className={"mt-1 text-xs " + profitClass(row.realized)}>報酬率 {percent(row.returnRate)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : null}
           <div className="rounded-md bg-paper p-1 text-sm">
             <button className={"rounded px-3 py-1.5 " + (contributionGroup === "stock" ? "bg-white font-semibold text-mint shadow-sm" : "text-ink/55")} onClick={() => setContributionGroup("stock")}>
               股票
@@ -1046,7 +1152,7 @@ function ChartCard({
   onToggle
 }: {
   title: string;
-  data: { name: string; value: number; ratio: number }[];
+  data: { name: string; value: number; ratio: number; holdingCost?: number; marketValue?: number; estimatedProfit?: number; returnRate?: number }[];
   empty: string;
   basisLabel: string;
   details: Record<string, DetailPositionRow[]>;
@@ -1199,7 +1305,7 @@ function RatioListCard({
   onToggle
 }: {
   title: string;
-  data: { name: string; value: number; ratio: number }[];
+  data: { name: string; value: number; ratio: number; holdingCost?: number; marketValue?: number; estimatedProfit?: number; returnRate?: number }[];
   empty: string;
   basisLabel: string;
   details: Record<string, DetailPositionRow[]>;
@@ -1284,7 +1390,7 @@ function AllocationBarCard({
   onToggle
 }: {
   title: string;
-  data: { name: string; value: number; ratio: number }[];
+  data: { name: string; value: number; ratio: number; holdingCost?: number; marketValue?: number; estimatedProfit?: number; returnRate?: number }[];
   empty: string;
   basisLabel: string;
   details: Record<string, DetailPositionRow[]>;
@@ -1343,7 +1449,12 @@ function AllocationBarCard({
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <MetricTile label={basisLabel} value={currency(item.value)} />
                     <MetricTile label="配置占比" value={percent(item.ratio)} />
+                    <MetricTile label="預估損益" value={currency(item.estimatedProfit ?? 0)} valueClass={profitClass(item.estimatedProfit ?? 0)} />
+                    <MetricTile label="報酬率" value={percent(item.returnRate ?? 0)} valueClass={profitClass(item.estimatedProfit ?? 0)} />
                   </div>
+                  <p className="mt-2 text-xs text-ink/45">
+                    成本 {currency(item.holdingCost ?? 0)} · 市值 {currency(item.marketValue ?? 0)}
+                  </p>
                 </div>
               );
             })}
@@ -1440,10 +1551,24 @@ function CollapsibleCard({
 }
 
 function isEtfPosition(position: Position) {
-  const industry = position.industry.toUpperCase();
-  const name = position.name.toUpperCase();
+  return isEtfMeta(position.symbol, position.name, position.industry);
+}
+
+function isEtfMeta(symbolValue: string, nameValue: string, industryValue: string) {
+  const symbol = symbolValue.trim();
+  const industry = industryValue.toUpperCase();
+  const name = nameValue.toUpperCase();
   if (industry.includes("ETF") || name.includes("ETF")) return true;
-  return /^00\d{2,3}$/.test(position.symbol);
+  return /^00\d{2,3}$/.test(symbol);
+}
+
+function getRealizedStartKey(window: RealizedWindow, anchorDate: Date) {
+  if (window === "all") return "";
+  const months = window === "1m" ? 1 : window === "3m" ? 3 : window === "6m" ? 6 : 12;
+  const start = new Date(anchorDate);
+  start.setMonth(start.getMonth() - months);
+  start.setDate(start.getDate() + 1);
+  return start.toISOString().slice(0, 10);
 }
 
 function isUuidLike(value: string) {
