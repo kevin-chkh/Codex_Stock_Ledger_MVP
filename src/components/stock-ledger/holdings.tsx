@@ -252,12 +252,13 @@ export function Holdings({
           <div className="overflow-hidden rounded-xl border border-ink/10 bg-white">
             {filteredPositions.map((position, index) => {
               const isClosed = position.quantity === 0;
-              const expanded = expandedPositionId === position.stock_id;
+              const positionKey = `${position.portfolio_id}:${position.stock_id}`;
+              const expanded = expandedPositionId === positionKey;
               return (
-                <article key={position.stock_id} className={index ? "border-t border-ink/8" : ""}>
+                <article key={positionKey} className={index ? "border-t border-ink/8" : ""}>
                   <div className="px-3 py-3">
                     <div className="flex items-start justify-between gap-3">
-                      <button className="min-w-0 flex-1 text-left" onClick={() => !isClosed && setExpandedPositionId(expanded ? null : position.stock_id)}>
+                      <button className="min-w-0 flex-1 text-left" onClick={() => !isClosed && setExpandedPositionId(expanded ? null : positionKey)}>
                         <div className="flex items-center gap-2">
                           <p className="truncate font-semibold">
                             {position.symbol} {position.name}
@@ -298,9 +299,9 @@ export function Holdings({
           <div className="space-y-3">
             {filteredPositions.map((position) => (
               position.quantity === 0 ? (
-                <ClosedHoldingCard key={position.stock_id} position={position} />
+                <ClosedHoldingCard key={`${position.portfolio_id}:${position.stock_id}`} position={position} />
               ) : (
-                <ExpandedHoldingCard key={position.stock_id} position={position} onAdjustCost={onAdjustCost} />
+                <ExpandedHoldingCard key={`${position.portfolio_id}:${position.stock_id}`} position={position} onAdjustCost={onAdjustCost} />
               )
             ))}
           </div>

@@ -491,7 +491,7 @@ export function Analytics({
     >();
 
     for (const position of sourcePositions) {
-      const valueBasis = getPositionBasisValue(position, analysisBasis);
+      const returnBasis = position.holding_cost;
       const metricValue = position.estimated_profit;
       const current = grouped.get(position.stock_id) ?? {
         key: position.stock_id,
@@ -506,15 +506,15 @@ export function Analytics({
       current.realized = roundMoney(current.realized + position.realized_profit);
       current.unrealized = roundMoney(current.unrealized + position.estimated_profit);
       current.marketValue = roundMoney(current.marketValue + position.market_value);
-      current.basisValue = roundMoney(current.basisValue + valueBasis);
-      current.returnRate = current.basisValue > 0 ? roundMoney(current.unrealized / current.basisValue) : 0;
+      current.basisValue = roundMoney(current.basisValue + returnBasis);
+      current.returnRate = current.basisValue > 0 ? current.unrealized / current.basisValue : 0;
       current.details = [
         {
           key: position.stock_id,
           symbol: position.symbol,
           name: position.name,
           metricValue,
-          returnRate: valueBasis > 0 ? metricValue / valueBasis : 0,
+          returnRate: returnBasis > 0 ? metricValue / returnBasis : 0,
           quantityText: `${position.quantity} 股`,
           costText: currency(position.holding_cost),
           shareText: "單一標的"
@@ -526,7 +526,7 @@ export function Analytics({
     return [...grouped.values()]
       .filter((item) => item.realized !== 0 || item.unrealized !== 0)
       .sort((a, b) => b.unrealized - a.unrealized);
-  }, [analysisBasis, filteredPositions, realizedStockRows]);
+  }, [filteredPositions, realizedStockRows]);
 
   const contributionRows = useMemo(() => {
     const metricKey = profitMode === "realized" ? "realized" : "unrealized";
@@ -592,7 +592,7 @@ export function Analytics({
       const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number; basisValue: number; details: ContributionDetailRow[] }>();
       for (const position of sourcePositions) {
         const metricValue = position.estimated_profit;
-        const basisValue = getPositionBasisValue(position, analysisBasis);
+        const basisValue = position.holding_cost;
         const current = grouped.get(position.industry) ?? {
           label: position.industry,
           realized: 0,
@@ -678,7 +678,7 @@ export function Analytics({
     const grouped = new Map<string, { label: string; realized: number; unrealized: number; count: number; basisValue: number; details: ContributionDetailRow[] }>();
     for (const position of sourcePositions) {
       const metricValue = position.estimated_profit;
-      const basisValue = getPositionBasisValue(position, analysisBasis);
+      const basisValue = position.holding_cost;
       const tags = position.tags.length ? position.tags : ["未標籤"];
       for (const tag of tags) {
         const current = grouped.get(tag) ?? {

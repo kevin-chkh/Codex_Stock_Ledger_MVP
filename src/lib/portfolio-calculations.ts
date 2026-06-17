@@ -211,7 +211,7 @@ export function buildPositions(
     drafts.set(key, rebasedDraft);
   }
 
-  return [...drafts.values()]
+  const positions = [...drafts.values()]
     .filter((draft) => {
       return draft.quantity > 0 || draft.realized_profit !== 0;
     })
@@ -267,6 +267,67 @@ export function buildPositions(
         trade_holding_cost: Math.max(roundMoney(tradeDraft?.remaining_cost ?? 0), 0)
       };
     });
+
+  return mergeDuplicateSymbolPositions(positions);
+}
+
+function mergeDuplicateSymbolPositions(positions: Position[]) {
+  const map = new Map<string, Position>();
+
+  for (const position of positions) {
+    const key = `${position.portfolio_id}:${position.symbol}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, position);
+      continue;
+    }
+
+    const quantity = roundMoney(existing.quantity + position.quantity);
+    const holdingCost = roundMoney(existing.holding_cost + position.holding_cost);
+    const remainingCost = roundMoney(existing.remaining_cost + position.remaining_cost);
+    const marketValue = roundMoney(existing.market_value + position.market_value);
+    const bookProfit = roundMoney(existing.book_profit + position.book_profit);
+    const estimatedSellFee = roundMoney(existing.estimated_sell_fee + position.estimated_sell_fee);
+    const estimatedSellTax = roundMoney(existing.estimated_sell_tax + position.estimated_sell_tax);
+    const estimatedProfit = roundMoney(existing.estimated_profit + position.estimated_profit);
+    const realizedProfit = roundMoney(existing.realized_profit + position.realized_profit);
+    const totalProfit = roundMoney(realizedProfit + estimatedProfit);
+    const weightedAverageCost =
+      quantity > 0
+        ? roundMoney((existing.average_cost * existing.quantity + position.average_cost * position.quantity) / quantity)
+        : 0;
+
+    map.set(key, {
+      ...existing,
+      name: existing.name || position.name,
+      industry: existing.industry !== "未分類" ? existing.industry : position.industry,
+      tags: [...new Set([...existing.tags, ...position.tags])],
+      quantity,
+      holding_cost: holdingCost,
+      average_cost: weightedAverageCost,
+      remaining_cost: remainingCost,
+      paid_fee: roundMoney(existing.paid_fee + position.paid_fee),
+      paid_tax: roundMoney(existing.paid_tax + position.paid_tax),
+      realized_profit: realizedProfit,
+      current_price: existing.current_price > 0 ? existing.current_price : position.current_price,
+      price_updated_at: existing.price_updated_at ?? position.price_updated_at,
+      market_value: marketValue,
+      book_profit: bookProfit,
+      estimated_sell_fee: estimatedSellFee,
+      estimated_sell_tax: estimatedSellTax,
+      estimated_profit: estimatedProfit,
+      estimated_return_rate: holdingCost > 0 ? estimatedProfit / holdingCost : 0,
+      unrealized_profit: estimatedProfit,
+      unrealized_return_rate: holdingCost > 0 ? estimatedProfit / holdingCost : 0,
+      total_profit: totalProfit,
+      total_return_rate: holdingCost > 0 ? totalProfit / holdingCost : 0,
+      has_manual_adjustment: existing.has_manual_adjustment || position.has_manual_adjustment,
+      trade_quantity: roundMoney((existing.trade_quantity ?? 0) + (position.trade_quantity ?? 0)),
+      trade_holding_cost: roundMoney((existing.trade_holding_cost ?? 0) + (position.trade_holding_cost ?? 0))
+    });
+  }
+
+  return [...map.values()];
 }
 
 function calculateEstimatedSellTax(
@@ -282,7 +343,7 @@ function calculateEstimatedSellTax(
 function isTaiwanEtf(stock: Stock | undefined) {
   const symbol = stock?.symbol.trim() ?? "";
   const industry = stock?.industry?.trim().toUpperCase() ?? "";
-  return industry.includes("ETF") || /^00\d+/.test(symbol);
+  return industry.includes("ETF") || /^0[0-9A-Z]{3,}$/i.test(symbol);
 }
 
 function latestOverridesByKey(portfolioStockOverrides: PortfolioStockOverride[]) {

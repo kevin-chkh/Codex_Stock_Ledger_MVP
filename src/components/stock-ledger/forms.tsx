@@ -95,9 +95,32 @@ export function TradeForm({
 }) {
   const [showSymbolSuggestions, setShowSymbolSuggestions] = useState(false);
   const [showNameSuggestions, setShowNameSuggestions] = useState(false);
-  const symbolSuggestions = useMemo(() => fuzzySearchStocks(stockCatalog, draft.symbol, 8), [stockCatalog, draft.symbol]);
-  const nameSuggestions = useMemo(() => fuzzySearchStocks(stockCatalog, draft.name, 8), [stockCatalog, draft.name]);
   const selectedPortfolioId = draft.portfolioId || portfolios[0]?.id || "";
+  const sellableStockCatalog = useMemo(
+    () =>
+      positions
+        .filter((position) => position.portfolio_id === selectedPortfolioId && position.quantity > 0)
+        .map((position) => {
+          const stock = stocks.find((item) => item.id === position.stock_id);
+          return {
+            symbol: position.symbol,
+            name: position.name,
+            industry: position.industry,
+            market: stock?.market || "TWSE",
+            isEtf: position.industry === "ETF"
+          };
+        }),
+    [positions, selectedPortfolioId, stocks]
+  );
+  const stockSearchCatalog = draft.type === "sell" ? sellableStockCatalog : stockCatalog;
+  const symbolSuggestions = useMemo(() => {
+    if (draft.type === "sell" && !draft.symbol.trim()) return sellableStockCatalog.slice(0, 8);
+    return fuzzySearchStocks(stockSearchCatalog, draft.symbol, 8);
+  }, [draft.symbol, draft.type, sellableStockCatalog, stockSearchCatalog]);
+  const nameSuggestions = useMemo(() => {
+    if (draft.type === "sell" && !draft.name.trim()) return sellableStockCatalog.slice(0, 8);
+    return fuzzySearchStocks(stockSearchCatalog, draft.name, 8);
+  }, [draft.name, draft.type, sellableStockCatalog, stockSearchCatalog]);
   const selectedStock = useMemo(() => stocks.find((stock) => stock.symbol === draft.symbol), [stocks, draft.symbol]);
   const selectedPosition = useMemo(
     () => positions.find((position) => position.stock_id === selectedStock?.id && position.portfolio_id === selectedPortfolioId),
@@ -106,7 +129,7 @@ export function TradeForm({
 
   const autoFillBySymbol = (rawSymbol: string) => {
     const symbol = normalizeStockKeyword(rawSymbol);
-    const found = findStockBySymbol(stockCatalog, symbol) ?? stocks.find((stock) => stock.symbol === symbol);
+    const found = findStockBySymbol(stockSearchCatalog, symbol) ?? stocks.find((stock) => stock.symbol === symbol);
     setDraft((value) => ({
       ...value,
       symbol,
@@ -137,7 +160,7 @@ export function TradeForm({
   const autoFillByName = (name: string) => {
     const normalizedName = name.trim();
     const found =
-      findStockByName(stockCatalog, normalizedName) ??
+      findStockByName(stockSearchCatalog, normalizedName) ??
       stocks.find((stock) => stock.name === normalizedName || stock.name.includes(normalizedName));
     setDraft((value) => ({
       ...value,
@@ -208,6 +231,7 @@ export function TradeForm({
             autoFillBySymbol(symbol);
             setShowSymbolSuggestions(Boolean(symbol.trim()));
           }}
+          onFocus={() => setShowSymbolSuggestions(draft.type === "sell" || Boolean(draft.symbol.trim()))}
           placeholder="2330"
         />
         {showSymbolSuggestions && symbolSuggestions.length > 0 && (
@@ -222,6 +246,7 @@ export function TradeForm({
             autoFillByName(name);
             setShowNameSuggestions(Boolean(name.trim()));
           }}
+          onFocus={() => setShowNameSuggestions(draft.type === "sell" || Boolean(draft.name.trim()))}
           placeholder="台積電"
           trailing={
             draft.name ? (

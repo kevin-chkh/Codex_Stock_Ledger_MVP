@@ -134,6 +134,7 @@ export function Field({
   type = "text",
   inputMode,
   placeholder,
+  onFocus,
   trailing
 }: {
   label: string;
@@ -142,6 +143,7 @@ export function Field({
   type?: string;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   placeholder?: string;
+  onFocus?: () => void;
   trailing?: ReactNode;
 }) {
   return (
@@ -155,6 +157,7 @@ export function Field({
           value={value}
           placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
+          onFocus={onFocus}
         />
         {trailing ? <div className="absolute inset-y-0 right-0 flex items-center pr-3">{trailing}</div> : null}
       </div>

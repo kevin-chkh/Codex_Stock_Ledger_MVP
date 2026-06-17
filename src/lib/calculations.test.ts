@@ -343,6 +343,30 @@ describe("buildPositions", () => {
     expect(position.estimated_profit).toBe(954.89);
   });
 
+  it("merges duplicate stock ids with the same symbol in one portfolio", () => {
+    const duplicateStock: Stock = {
+      ...stock,
+      id: "stock-duplicate",
+      symbol: "2330",
+      name: "台積電",
+      market: "TWSE",
+      current_price: 110
+    };
+    const positions = buildPositions(
+      [
+        trade({ id: "buy-1", stock_id: "stock-1", quantity: 100, gross_amount: 10000, fee: 20, net_amount: 10020 }),
+        trade({ id: "buy-2", stock_id: "stock-duplicate", quantity: 50, gross_amount: 6000, fee: 12.83, net_amount: 6012.83 })
+      ],
+      [stock, duplicateStock]
+    );
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0].symbol).toBe("2330");
+    expect(positions[0].quantity).toBe(150);
+    expect(positions[0].holding_cost).toBe(16032.83);
+    expect(positions[0].market_value).toBe(16500);
+  });
+
   it("rejects selling more than current holdings", () => {
     const result = validateSellQuantity([trade({ quantity: 100 })], "stock-1", "portfolio-1", 101);
 

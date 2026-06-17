@@ -166,6 +166,15 @@ function parseNumericInput(value: string) {
   return Number(String(value || "").replace(/,/g, ""));
 }
 
+function sanitizeText(value: unknown) {
+  return String(value ?? "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/?[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function formatQuoteUpdatedAt(value: string | null) {
   if (!value) return "未更新";
   const date = new Date(value);
@@ -254,6 +263,7 @@ export default function StockLedgerApp() {
   const [email, setEmail] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cloudDataReady, setCloudDataReady] = useState(!hasSupabaseEnv);
   const [message, setMessage] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
@@ -487,6 +497,7 @@ export default function StockLedgerApp() {
     try {
       if (!hasSupabaseEnv || !supabase) {
         if (!loadLocalData()) seedDemoData();
+        setCloudDataReady(true);
         return;
       }
 
@@ -496,20 +507,24 @@ export default function StockLedgerApp() {
 
       setUserId(session?.user.id ?? null);
       if (session?.user.id) {
-        await loadCloudData(session.user.id);
+        await loadCloudData(session.user.id, true);
       } else {
         if (!loadLocalData()) seedDemoData();
+        setCloudDataReady(true);
       }
 
       supabase.auth.onAuthStateChange((_event, sessionValue) => {
         setUserId(sessionValue?.user.id ?? null);
         if (sessionValue?.user.id) {
-          void loadCloudData(sessionValue.user.id);
+          void loadCloudData(sessionValue.user.id, true);
+        } else {
+          setCloudDataReady(false);
         }
       });
     } catch (error) {
       console.error("Failed to initialize app", error);
       if (!loadLocalData()) seedDemoData();
+      setCloudDataReady(true);
       setMessage("初始化失敗，已切換成本機 demo 資料。");
     } finally {
       setLoading(false);
@@ -769,8 +784,9 @@ export default function StockLedgerApp() {
     ]);
   }
 
-  async function loadCloudData(uidValue: string) {
+  async function loadCloudData(uidValue: string, markReady = false) {
     if (!supabase) return;
+    if (markReady) setCloudDataReady(false);
     const loadRevision = dataMutationRevisionRef.current;
     const [portfolioResult, stockResult, tagResult, overrideResult, tradeResult, cashResult, settingsResult, adjustmentsResult] = await Promise.all([
       supabase.from("portfolios").select("*").order("created_at", { ascending: true }),
@@ -846,6 +862,7 @@ export default function StockLedgerApp() {
     if (warnings.length) {
       setMessage("部分雲端資料載入失敗，已保留目前畫面資料：" + warnings.join("、") + "。");
     }
+    if (markReady) setCloudDataReady(true);
   }
 
   async function reloadCloudDataAfterWrite() {
@@ -1122,7 +1139,7 @@ export default function StockLedgerApp() {
 
     const tradeCatalog = await getCatalogForSymbols([parsed.data.symbol]);
     const catalogStock = findStockBySymbol(tradeCatalog, parsed.data.symbol);
-    const displayName = catalogStock?.name || parsed.data.name;
+    const displayName = sanitizeText(catalogStock?.name || parsed.data.name);
     const existingStock = stocks.find((item) => item.symbol === parsed.data.symbol);
     const globalIndustry = resolveIndustryValue(existingStock?.industry, catalogStock?.industry);
     const stock: Stock =
@@ -1526,13 +1543,13 @@ export default function StockLedgerApp() {
           line,
           raw: row,
           tradedAt: row[headerIndex.get("日期") ?? -1] || today(),
-          portfolioName: row[headerIndex.get("帳本") ?? -1] || "",
-          type: row[headerIndex.get("買賣") ?? -1] || "",
-          symbol: (row[headerIndex.get("股票代號") ?? -1] || "").trim(),
-          name: (row[headerIndex.get("股票名稱") ?? -1] || "").trim(),
+          portfolioName: sanitizeText(row[headerIndex.get("帳本") ?? -1]),
+          type: sanitizeText(row[headerIndex.get("買賣") ?? -1]),
+          symbol: sanitizeText(row[headerIndex.get("股票代號") ?? -1]).toUpperCase(),
+          name: sanitizeText(row[headerIndex.get("股票名稱") ?? -1]),
           quantity: Number((row[headerIndex.get("股數") ?? -1] || "").replace(/,/g, "")),
           unitPrice: Number((row[headerIndex.get("成交單價") ?? -1] || "").replace(/,/g, "")),
-          industry: (row[headerIndex.get("產業別") ?? -1] || "").trim()
+          industry: sanitizeText(row[headerIndex.get("產業別") ?? -1])
         }));
 
       let nextPortfolios = [...portfolios];
@@ -1729,14 +1746,14 @@ export default function StockLedgerApp() {
         .map(({ row, line }) => ({
           line,
           raw: row,
-          portfolioName: (row[headerIndex.get("帳本") ?? -1] || "").trim(),
-          symbol: (row[headerIndex.get("股票代號") ?? -1] || "").trim(),
-          name: (row[headerIndex.get("股票名稱") ?? -1] || "").trim(),
+          portfolioName: sanitizeText(row[headerIndex.get("帳本") ?? -1]),
+          symbol: sanitizeText(row[headerIndex.get("股票代號") ?? -1]).toUpperCase(),
+          name: sanitizeText(row[headerIndex.get("股票名稱") ?? -1]),
           quantity: Number((row[headerIndex.get("持有股數") ?? -1] || "").replace(/,/g, "")),
           holdingCost: Number((row[headerIndex.get("持有成本") ?? -1] || "").replace(/,/g, "")),
           currentPrice: Number((row[headerIndex.get("目前價格") ?? -1] || "").replace(/,/g, "")),
-          industry: (row[headerIndex.get("產業別") ?? -1] || "").trim(),
-          tags: (row[headerIndex.get("標籤") ?? -1] || "").trim()
+          industry: sanitizeText(row[headerIndex.get("產業別") ?? -1]),
+          tags: sanitizeText(row[headerIndex.get("標籤") ?? -1])
         }));
 
       let nextStocks = [...stocks];
@@ -1933,6 +1950,8 @@ export default function StockLedgerApp() {
     );
   }
 
+  const shouldWaitForCloudData = hasSupabaseEnv && userId !== "demo" && !cloudDataReady;
+
   return (
     <main className="mx-auto min-h-screen w-full max-w-2xl pb-[calc(9rem+env(safe-area-inset-bottom))]">
       <header className="sticky top-0 z-20 flex items-center justify-between bg-paper/90 px-4 py-3 backdrop-blur">
@@ -1988,7 +2007,9 @@ export default function StockLedgerApp() {
       )}
 
       <section className="mt-4 px-4">
-        {activeTab === "dashboard" && (
+        {shouldWaitForCloudData ? (
+          <DataLoadingPanel />
+        ) : activeTab === "dashboard" ? (
           <Dashboard
             metrics={metrics}
             positions={scopedPositions}
@@ -1999,8 +2020,7 @@ export default function StockLedgerApp() {
             onPortfolioChange={setSelectedPortfolioId}
             onEditTrade={openEditTrade}
           />
-        )}
-        {activeTab === "portfolios" && (
+        ) : activeTab === "portfolios" ? (
           <Portfolios
             portfolios={portfolios}
             cashMovements={cashMovements}
@@ -2011,8 +2031,7 @@ export default function StockLedgerApp() {
             onDelete={requestDeletePortfolio}
             onSelectDefault={setSelectedPortfolioId}
           />
-        )}
-        {activeTab === "trades" && (
+        ) : activeTab === "trades" ? (
           <Trades
             trades={scopedTrades}
             stocks={stocks}
@@ -2023,8 +2042,7 @@ export default function StockLedgerApp() {
             onDelete={requestDeleteTrade}
             onImportCsv={requestImportTradesCsv}
           />
-        )}
-        {activeTab === "holdings" && (
+        ) : activeTab === "holdings" ? (
           <Holdings
             positions={scopedPositions}
             portfolios={portfolios}
@@ -2035,8 +2053,7 @@ export default function StockLedgerApp() {
             onAdjustCost={openStockAdjustEditor}
             onImportCsv={requestImportHoldingsCsv}
           />
-        )}
-        {activeTab === "analytics" && (
+        ) : activeTab === "analytics" ? (
           <Analytics
             positions={scopedPositions}
             trades={scopedTrades}
@@ -2046,7 +2063,7 @@ export default function StockLedgerApp() {
             onPortfolioChange={setSelectedPortfolioId}
             cash={metrics.cash}
           />
-        )}
+        ) : null}
       </section>
 
       <button
@@ -2272,12 +2289,21 @@ function normalizePortfolio(row: Record<string, unknown>): Portfolio {
 }
 
 function normalizeStock(row: Record<string, unknown>): Stock {
-  return { ...(row as Stock), current_price: numberValue(row.current_price) };
+  return {
+    ...(row as Stock),
+    symbol: sanitizeText(row.symbol).toUpperCase(),
+    name: sanitizeText(row.name),
+    market: sanitizeText(row.market) || "TWSE",
+    industry: sanitizeText(row.industry) || null,
+    current_price: numberValue(row.current_price)
+  };
 }
 
 function normalizeTrade(row: Record<string, unknown>): Trade {
+  const stockRow = row.stock && typeof row.stock === "object" ? normalizeStock(row.stock as Record<string, unknown>) : undefined;
   return {
     ...(row as Trade),
+    stock: stockRow,
     quantity: numberValue(row.quantity),
     unit_price: numberValue(row.unit_price),
     gross_amount: numberValue(row.gross_amount),
@@ -2304,7 +2330,7 @@ function normalizePositionAdjustment(row: Record<string, unknown>): PositionAdju
 function normalizePortfolioStockOverride(row: Record<string, unknown>): PortfolioStockOverride {
   return {
     ...(row as PortfolioStockOverride),
-    industry_override: typeof row.industry_override === "string" ? row.industry_override : null
+    industry_override: typeof row.industry_override === "string" ? sanitizeText(row.industry_override) || null : null
   };
 }
 
@@ -2320,9 +2346,9 @@ function normalizeSettings(row: Record<string, unknown>): UserSettings {
 }
 
 function resolveIndustryValue(primary: string | null | undefined, fallback?: string | null) {
-  const normalizedPrimary = primary?.trim();
+  const normalizedPrimary = sanitizeText(primary);
   if (normalizedPrimary && normalizedPrimary !== "未分類") return normalizedPrimary;
-  const normalizedFallback = fallback?.trim();
+  const normalizedFallback = sanitizeText(fallback);
   return normalizedFallback || primary || null;
 }
 
@@ -2402,6 +2428,20 @@ function saveLocalSnapshot(snapshot: LocalSnapshot) {
   } catch (error) {
     console.error("Failed to save local snapshot", error);
   }
+}
+
+function DataLoadingPanel() {
+  return (
+    <section className="rounded-lg border border-ink/10 bg-white p-5 text-sm text-ink/65 shadow-soft">
+      <div className="flex items-center gap-3">
+        <RefreshCw size={18} className="shrink-0 animate-spin text-mint" />
+        <div>
+          <p className="font-semibold text-ink">正在同步雲端資料</p>
+          <p className="mt-1">交易、股票、持股校正與標籤載入完成後再顯示，避免暫時性的持股分身。</p>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function BottomNav({ activeTab, onChange }: { activeTab: Tab; onChange: (tab: Tab) => void }) {

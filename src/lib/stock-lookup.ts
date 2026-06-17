@@ -29,6 +29,7 @@ const FALLBACK_STOCKS: StockCatalogItem[] = [
 ];
 
 const CACHE_KEY = "stock-ledger-catalog-v2";
+const ETF_SYMBOL_PATTERN = /^0[0-9A-Z]{3,}$/i;
 
 export async function loadStockCatalog(): Promise<StockCatalogLoadResult> {
   const cached = loadCatalogCache();
@@ -50,11 +51,11 @@ export async function loadStockCatalog(): Promise<StockCatalogLoadResult> {
 }
 
 export function findStockBySymbol(catalog: StockCatalogItem[], symbol: string) {
-  const normalized = symbol.trim();
+  const normalized = normalizeSymbol(symbol);
   if (!normalized) return undefined;
   const exact = catalog.find((item) => item.symbol === normalized);
   if (exact) return exact;
-  if (/^00\d+/.test(normalized)) return { symbol: normalized, name: "", industry: "ETF", market: "TWSE", isEtf: true };
+  if (ETF_SYMBOL_PATTERN.test(normalized)) return { symbol: normalized, name: "", industry: "ETF", market: "TWSE", isEtf: true };
   return undefined;
 }
 
@@ -65,15 +66,21 @@ export function findStockByName(catalog: StockCatalogItem[], name: string) {
 }
 
 export function fuzzySearchBySymbol(catalog: StockCatalogItem[], keyword: string, limit = 8) {
-  const q = keyword.trim();
+  const q = normalizeSymbol(keyword);
   if (!q) return [];
   const starts = catalog.filter((item) => item.symbol.startsWith(q));
   const contains = catalog.filter((item) => !item.symbol.startsWith(q) && item.symbol.includes(q));
-  return [...starts, ...contains].slice(0, limit);
+  const results = [...starts, ...contains];
+  if (ETF_SYMBOL_PATTERN.test(q) && !results.some((item) => item.symbol === q)) {
+    results.unshift({ symbol: q, name: "", industry: "ETF", market: "TWSE", isEtf: true });
+  }
+  return results.slice(0, limit);
 }
 
 export function fuzzySearchStocks(catalog: StockCatalogItem[], keyword: string, limit = 8) {
-  const q = keyword.trim().toLowerCase();
+  const raw = keyword.trim();
+  const q = raw.toLowerCase();
+  const normalizedSymbol = normalizeSymbol(raw);
   if (!q) return [];
 
   const score = (item: StockCatalogItem) => {
@@ -87,12 +94,17 @@ export function fuzzySearchStocks(catalog: StockCatalogItem[], keyword: string, 
     return 99;
   };
 
-  return catalog
+  const results = catalog
     .map((item) => ({ item, score: score(item) }))
     .filter((entry) => entry.score < 99)
     .sort((a, b) => a.score - b.score || a.item.symbol.localeCompare(b.item.symbol))
-    .slice(0, limit)
     .map((entry) => entry.item);
+
+  if (ETF_SYMBOL_PATTERN.test(normalizedSymbol) && !results.some((item) => item.symbol === normalizedSymbol)) {
+    results.unshift({ symbol: normalizedSymbol, name: "", industry: "ETF", market: "TWSE", isEtf: true });
+  }
+
+  return results.slice(0, limit);
 }
 
 function loadCatalogCache(): StockCatalogItem[] {
@@ -119,21 +131,26 @@ function saveCatalogCache(catalog: StockCatalogItem[]) {
 function mergeCatalog(items: StockCatalogItem[]) {
   const map = new Map<string, StockCatalogItem>();
   for (const item of items) {
-    const existing = map.get(item.symbol);
-    const isEtf = item.isEtf ?? (item.industry === "ETF" || /^00\d+/.test(item.symbol));
+    const symbol = normalizeSymbol(item.symbol);
+    const existing = map.get(symbol);
+    const name = sanitizeText(item.name);
+    const industry = sanitizeText(item.industry);
+    const isEtf = item.isEtf ?? (industry === "ETF" || ETF_SYMBOL_PATTERN.test(symbol));
     const normalizedItem = {
       ...item,
-      industry: isEtf ? "ETF" : item.industry || "\u672a\u5206\u985e",
-      market: item.market || "TWSE",
+      symbol,
+      name,
+      industry: isEtf ? "ETF" : industry || "\u672a\u5206\u985e",
+      market: sanitizeText(item.market) || "TWSE",
       isEtf
     };
 
     if (!existing) {
-      map.set(item.symbol, normalizedItem);
+      map.set(symbol, normalizedItem);
       continue;
     }
 
-    map.set(item.symbol, {
+    map.set(symbol, {
       ...normalizedItem,
       name: normalizedItem.name || existing.name,
       industry:
@@ -145,4 +162,17 @@ function mergeCatalog(items: StockCatalogItem[]) {
     });
   }
   return [...map.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+function normalizeSymbol(symbol: string) {
+  return symbol.trim().toUpperCase();
+}
+
+function sanitizeText(value: unknown) {
+  return String(value ?? "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/?[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }

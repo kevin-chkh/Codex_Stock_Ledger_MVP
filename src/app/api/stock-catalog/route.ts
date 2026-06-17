@@ -88,15 +88,24 @@ async function fetchTwseTableRows(url: string): Promise<Record<string, unknown>[
 function readString(row: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = row[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "string" && sanitizeText(value)) return sanitizeText(value);
     if (typeof value === "number") return String(value);
   }
   return "";
 }
 
+function sanitizeText(value: unknown) {
+  return String(value ?? "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/?[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeIndustry(symbol: string, rawIndustry: string) {
   if (ETF_SYMBOL_PATTERN.test(symbol)) return "ETF";
-  const industry = rawIndustry.trim();
+  const industry = sanitizeText(rawIndustry);
   return TPEX_INDUSTRY_MAP[industry] || industry || "未分類";
 }
 
@@ -108,8 +117,8 @@ function normalizeCatalogRow(row: Record<string, unknown>, market: StockCatalogI
   if (!symbol || !name) return null;
 
   return {
-    symbol,
-    name,
+    symbol: symbol.toUpperCase(),
+    name: sanitizeText(name),
     industry: normalizeIndustry(symbol, rawIndustry),
     market,
     isEtf: ETF_SYMBOL_PATTERN.test(symbol)
