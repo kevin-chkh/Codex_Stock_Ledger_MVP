@@ -133,12 +133,15 @@ function mergeCatalog(items: StockCatalogItem[]) {
   for (const item of items) {
     const symbol = normalizeSymbol(item.symbol);
     const existing = map.get(symbol);
-    const isEtf = item.isEtf ?? (item.industry === "ETF" || ETF_SYMBOL_PATTERN.test(symbol));
+    const name = sanitizeText(item.name);
+    const industry = sanitizeText(item.industry);
+    const isEtf = item.isEtf ?? (industry === "ETF" || ETF_SYMBOL_PATTERN.test(symbol));
     const normalizedItem = {
       ...item,
       symbol,
-      industry: isEtf ? "ETF" : item.industry || "\u672a\u5206\u985e",
-      market: item.market || "TWSE",
+      name,
+      industry: isEtf ? "ETF" : industry || "\u672a\u5206\u985e",
+      market: sanitizeText(item.market) || "TWSE",
       isEtf
     };
 
@@ -163,4 +166,13 @@ function mergeCatalog(items: StockCatalogItem[]) {
 
 function normalizeSymbol(symbol: string) {
   return symbol.trim().toUpperCase();
+}
+
+function sanitizeText(value: unknown) {
+  return String(value ?? "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<\/?[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
